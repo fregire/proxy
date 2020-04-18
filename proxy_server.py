@@ -5,6 +5,11 @@ from OpenSSL import crypto
 
 class ProxyServer:
     def __init__(self):
+        #SSL options
+        self.ca_cert = crypto.load_certificate(crypto.FILETYPE_PEM,
+                                               open('rootCA.crt').read())
+        self.ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM,
+                                              open('rootCA.key').read())
         self.serverSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     def start(self, host='localhost', port=8080):
@@ -66,19 +71,20 @@ class ProxyServer:
         #
         remote_sock.connect((host, port))
         client_sock.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+
+        #Getting SSL certificate from remote server
         der_cert = remote_sock.getpeercert(True)
         pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
+        print(pem_cert)
 
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_cert.encode())
 
-        for i in range(cert.get_extension_count()):
-            ext = cert.get_extension(i)
-            #Find SAN in certificate
-            if ext.get_short_name().decode() == 'subjectAltName':
-                print(ext)
+        self.generate_cert(cert)
+
 
         # [(b'C', b'US'), (b'ST', b'California'), (b'L', b'San Francisco'),
         # (b'O', b'GitHub, Inc.'), (b'CN', b'*.github.com')]
+        #DNS:*.github.com, DNS:github.com
         #print(cert.get_subject().get_components())
 
         #
@@ -140,15 +146,45 @@ class ProxyServer:
         # http server - module для тестов сайтов
         # requests - указать какие прокси серверы использовать и принимать данные
         # и проверять эти данные
-    def __get_cert_info(self, addr):
-        host, port = addr
+    def generate_cert(self, remote_cert):
+        #Public Key
+        pub_key = crypto.PKey()
+        pub_key.generate_key(crypto.TYPE_RSA, 2048)
 
-        cert_pem = ssl.get_server_certificate((host, port))
+        #Extensions (SAN)
+        extensions = []
+
+        for i in range(remote_cert.get_extension_count()):
+            ext = remote_cert.get_extension(i)
+            #Find SAN in certificate
+            if ext.get_short_name().decode() == 'subjectAltName':
+                extensions.append(crypto.X509Extension(b'subjectAltName',
+                                                       False,
+                                                       str(ext).encode()))
+
+        #Generate request
+        cert = crypto.X509()
+        cert.gmtime_adj_notBefore(0)
+        cert.gmtime_adj_notAfter(5 * 365 * 24 * 60 * 60)
+        cert.set_issuer(self.ca_cert.get_subject())
+        cert.set_subject(remote_cert.get_subject())
+        cert.set_pubkey(pub_key)
+        cert.add_extensions(extensions)
+        cert.sign(self.ca_key, 'sha256')
+
+        return cert, pub_key
 
 
 def main():
     server = ProxyServer()
-    server.start('127.0.0.1', 8787)
+    #server.start('127.0.0.1', 8787)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    cert = crypto.load_certificate(crypto.FILETYPE_PEM,
+                                   open('server.crt').read())
+
+    res_cert, key = ProxyServer.generate_cert(server, cert)
+    print(crypto.dump_certificate(crypto.FILETYPE_PEM, res_cert))
 
 if __name__ == '__main__':
     main()
