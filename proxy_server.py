@@ -146,32 +146,16 @@ class ProxyServer:
         server_sock.sendall(client_data)
 
         while True:
-            received_from_server = False
-            received_from_client = False
-
-            while True:
-                server_data = server_sock.recv(self.buffer_size)
-
-                if not server_data:
+            try:
+                received = server_sock.recv(self.buffer_size)
+            except Exception as e:
+                print(e)
+                break
+            else:
+                if not received:
                     break
 
-                received_from_server = True
-                client_sock.sendall(server_data)
-
-            if not received_from_server:
-                break
-
-            while True:
-                client_data = client_sock.recv(self.buffer_size)
-
-                if not client_data:
-                    break
-
-                received_from_client = True
-                server_sock.sendall(client_data)
-
-            if not received_from_client:
-                break
+                client_sock.sendall(received)
 
     def __recv_data(self, sock):
         result = b''
