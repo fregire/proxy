@@ -13,55 +13,35 @@ class SSLGenerator:
                                              open(path_ca_key).read())
 
     def generate_same_cert_as(self, remote_cert):
+        cn = list(filter(lambda opt: opt[0] == b'CN',
+                    remote_cert.get_subject().get_components()))[0][1]
+        san = b''
+        # Findind SAN
+        extensions = []
+        for i in range(remote_cert.get_extension_count()):
+            ext = remote_cert.get_extension(i)
+            if ext.get_short_name() == b'subjectAltName':
+                san += str(ext).encode()
+
+        return self.generate_cert_with_key(cn, san)
+
+    def generate_cert_with_key(self, cn, san):
         # Public Key
         key = crypto.PKey()
         key.generate_key(crypto.TYPE_RSA, 2048)
 
-        # Extensions (SAN)
+        #Extensions
         extensions = []
-
-        for i in range(remote_cert.get_extension_count()):
-            ext = remote_cert.get_extension(i)
-            # Find SAN in certificate
-            if ext.get_short_name() == b'subjectAltName':
-                extensions.append(crypto.X509Extension(b'subjectAltName',
-                                                       False,
-                                                       str(ext).encode()))
-
-
-
-        # Generate request
+        extensions.append(crypto.X509Extension(b'basicConstraints',
+                                               False, f'CA:FALSE'.encode()))
+        extensions.append(crypto.X509Extension(b'subjectAltName',
+                                               False, san))
         cert = crypto.X509()
-
-        for component in remote_cert.get_subject().get_components():
-            if component[0] == b'CN':
-                cert.get_subject().CN = component[1]
-            if component[0] == b'L':
-                cert.get_subject().L = component[1]
-            if component[0] == b'O':
-                cert.get_subject().O = component[1]
-            if component[0] == b'ST':
-                cert.get_subject().ST = component[1]
-            if component[0] == b'OU':
-                cert.get_subject().OU = component[1]
-            if component[0] == b'C':
-                cert.get_subject().C = component[1]
-
-        extensions.append(
-            crypto.X509Extension(b'basicConstraints', False, b'CA:FALSE'))
-
-        extensions.append(
-            crypto.X509Extension(b'subjectKeyIdentifier', False, b'hash',
-                                 subject=cert))
-        extensions.append(crypto.X509Extension(b'authorityKeyIdentifier', False,
-                                               b'keyid:always,issuer:always',
-                                               subject=self.ca_cert,
-                                               issuer=self.ca_cert))
+        cert.get_subject().CN = cn
 
         cert.gmtime_adj_notBefore(0)
         cert.gmtime_adj_notAfter(5 * 365 * 24 * 60 * 60)
         cert.set_issuer(self.ca_cert.get_subject())
-        cert.set_serial_number(1000)
         cert.set_pubkey(key)
         cert.add_extensions(extensions)
         cert.set_version(2)
@@ -69,15 +49,17 @@ class SSLGenerator:
 
         return cert, key
 
-
 class ProxyServer:
-    def __init__(self):
+    def __init__(self, cert_ca='rootCA.crt',
+                 cert_key='rootCA.key', buffer_size=2048):
         self.serverSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.cert_ca = cert_ca
+        self.cert_key = cert_key
+        self.buffer_size = buffer_size
 
     def start(self, host='localhost', port=8080):
         self.serverSock.bind((host, port))
         self.serverSock.listen(5)
-
         while True:
             try:
                 client_sock, addr = self.serverSock.accept()
@@ -92,7 +74,7 @@ class ProxyServer:
                 print(threading.active_count())
 
     def __handle_client(self, client_sock):
-        client_data = self.__recv_data(client_sock, 1024)
+        client_data = self.__recv_data(client_sock)
         if not client_data:
             return None
 
@@ -112,7 +94,7 @@ class ProxyServer:
         remote_sock.sendall(data)
 
         while True:
-            received = remote_sock.recv(512)
+            received = remote_sock.recv(self.buffer_size)
 
             if not received:
                 break
@@ -130,24 +112,19 @@ class ProxyServer:
 
         client_sock.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
 
-        #Getting SSL certificate from remote server
-        der_cert = remote_sock.getpeercert(True)
-        pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
-        cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_cert.encode())
-
-        ssl_generator = SSLGenerator('rootCA.crt', 'rootCA.key')
-
-        new_cert, private_key = ssl_generator.generate_same_cert_as(cert)
-
+        # Getting SSL certificate from remote server
+        cert, key = self.__create_same_cert(remote_sock)
         path_to_cert = f'certificates/{host}.crt'
         path_to_key = f'certificates/{host}.key'
 
         if not os.path.exists(path_to_cert):
             with open(path_to_cert, 'x') as f:
-                f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, new_cert).decode())
+                f.write(crypto.dump_certificate(crypto.FILETYPE_PEM,
+                                                cert).decode())
 
             with open(path_to_key, 'x') as f:
-                f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, private_key).decode())
+                f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM,
+                                               key).decode())
 
         sclient = ssl.wrap_socket(client_sock,
                                   certfile=path_to_cert,
@@ -156,35 +133,54 @@ class ProxyServer:
                                   ssl_version=ssl.PROTOCOL_TLS,
                                   do_handshake_on_connect=False)
 
-        #TODO: Получать данные от клиента порционно и тут же отправлять
-        # на сервер
-        client_data = sclient.recv(10000)
-        print(client_data)
-        remote_sock.sendall(client_data)
+        self.__communicate(sclient, remote_sock)
+        sclient.close()
+        remote_sock.close()
+
+    def __communicate(self, client_sock, server_sock):
+        client_data = self.__recv_data(client_sock)
+
+        if not client_data:
+            return None
+
+        server_sock.sendall(client_data)
 
         while True:
-            server_data = remote_sock.recv(1024)
+            received_from_server = False
+            received_from_client = False
 
-            print('receiving data')
-            if not server_data:
-                client_data = sclient.recv(1024)
+            while True:
+                server_data = server_sock.recv(self.buffer_size)
+
+                if not server_data:
+                    break
+
+                received_from_server = True
+                client_sock.sendall(server_data)
+
+            if not received_from_server:
+                break
+
+            while True:
+                client_data = client_sock.recv(self.buffer_size)
 
                 if not client_data:
                     break
 
+                received_from_client = True
+                server_sock.sendall(client_data)
 
-            sclient.sendall(server_data)
-            remote_sock.sendall(client_data)
+            if not received_from_client:
+                break
 
-
-    def __recv_data(self, socket, data_len):
+    def __recv_data(self, sock):
         result = b''
 
         while True:
-            data = socket.recv(data_len)
+            data = sock.recv(self.buffer_size)
             result += data
 
-            if not data or len(data) < data_len:
+            if not data or len(data) < self.buffer_size:
                 break
 
         return result if len(result) > 0 else None
@@ -211,6 +207,16 @@ class ProxyServer:
         # requests - указать какие прокси серверы использовать и принимать данные
         # и проверять эти данные
 
+    def __create_same_cert(self, remote_socket):
+        der_cert = remote_socket.getpeercert(True)
+        pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
+        cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_cert.encode())
+
+        ssl_generator = SSLGenerator(self.cert_ca, self.cert_key)
+
+        new_cert, private_key = ssl_generator.generate_same_cert_as(cert)
+
+        return new_cert, private_key
 
 def main():
     server = ProxyServer()
