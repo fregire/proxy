@@ -1,92 +1,51 @@
 import socket
 import ssl
 import threading
-from OpenSSL import crypto
 import os
-
-class SSLGenerator:
-    def __init__(self, path_ca_cert, path_ca_key):
-        self.ca_cert = crypto.load_certificate(crypto.FILETYPE_PEM,
-                                               open(path_ca_cert).read())
-
-        self.ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM,
-                                             open(path_ca_key).read())
-
-    def generate_same_cert_as(self, remote_cert):
-        cn = list(filter(lambda opt: opt[0] == b'CN',
-                    remote_cert.get_subject().get_components()))[0][1]
-        san = b''
-        # Findind SAN
-        extensions = []
-        for i in range(remote_cert.get_extension_count()):
-            ext = remote_cert.get_extension(i)
-            if ext.get_short_name() == b'subjectAltName':
-                san += str(ext).encode()
-
-        return self.generate_cert_with_key(cn, san)
-
-    def generate_cert_with_key(self, cn, san):
-        # Public Key
-        key = crypto.PKey()
-        key.generate_key(crypto.TYPE_RSA, 2048)
-
-        #Extensions
-        extensions = []
-        extensions.append(crypto.X509Extension(b'basicConstraints',
-                                               False, f'CA:FALSE'.encode()))
-        extensions.append(crypto.X509Extension(b'subjectAltName',
-                                               False, san))
-        cert = crypto.X509()
-        cert.get_subject().CN = cn
-
-        cert.gmtime_adj_notBefore(0)
-        cert.gmtime_adj_notAfter(5 * 365 * 24 * 60 * 60)
-        cert.set_issuer(self.ca_cert.get_subject())
-        cert.set_pubkey(key)
-        cert.add_extensions(extensions)
-        cert.set_version(2)
-        cert.sign(self.ca_key, 'sha256')
-
-        return cert, key
+from OpenSSL import crypto
+from ssl_generator import SSLGenerator
+from concurrent.futures import ThreadPoolExecutor
 
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',
-                 cert_key='rootCA.key', buffer_size=2048):
+                 cert_key='rootCA.key', buffer_size=2048,
+                 certs_path='certificates', threads_count=2):
         self.serverSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.cert_ca = cert_ca
         self.cert_key = cert_key
         self.buffer_size = buffer_size
+        self.ssl_generator = SSLGenerator(cert_ca, cert_key)
+        self.threads_count = 2 * os.cpu_count()
+
+        if not os.path.exists(certs_path):
+            os.mkdir(certs_path)
 
     def start(self, host='localhost', port=8080):
         self.serverSock.bind((host, port))
-        self.serverSock.listen(5)
-        while True:
-            try:
+        self.serverSock.listen()
+        executor = ThreadPoolExecutor(max_workers=self.threads_count)
+
+        with executor as e:
+            while True:
                 client_sock, addr = self.serverSock.accept()
-                print('New connection', addr)
-            except KeyboardInterrupt:
-                break
-            else:
-                thread = threading.Thread(target=self.__handle_client,
-                                          args=(client_sock,),
-                                          daemon=True)
-                thread.start()
-                print(threading.active_count())
+                e.submit(self.__handle_client, client_sock)
 
     def __handle_client(self, client_sock):
+        print('Handling client')
         client_data = self.__recv_data(client_sock)
         if not client_data:
             return None
 
         package = client_data.decode()
-        host, port = self.__get_host_and_port(package)
+        host, port, is_https = self.__get_conn_info(package)
 
         # TODO: DETERMINE SAFE PORT
-        if port == 80:
+        if is_https:
+            self.__handle_https(client_sock, client_data, host, port)
+        else:
             self.__handle_http(client_sock, client_data, host, port)
 
-        if port == 443:
-            self.__handle_https(client_sock, client_data, host, port)
+        return "Success!"
 
     def __handle_http(self, client_sock, data, host, port):
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -104,6 +63,7 @@ class ProxyServer:
         client_sock.close()
 
     def __handle_https(self, client_sock, data, host, port):
+        print('Handling https')
         context = ssl.create_default_context()
         remote_sock = context.wrap_socket(socket.socket(socket.AF_INET,
                                                         socket.SOCK_STREAM),
@@ -133,29 +93,35 @@ class ProxyServer:
                                   ssl_version=ssl.PROTOCOL_TLS,
                                   do_handshake_on_connect=False)
 
-        self.__communicate(sclient, remote_sock)
-        sclient.close()
-        remote_sock.close()
+        try:
+            self.__communicate(sclient, remote_sock)
+        finally:
+            sclient.close()
+            remote_sock.close()
 
     def __communicate(self, client_sock, server_sock):
-        client_data = self.__recv_data(client_sock)
-
-        if not client_data:
-            return None
-
-        server_sock.sendall(client_data)
+        client_sock.settimeout(2)
+        server_sock.settimeout(2)
 
         while True:
-            try:
-                received = server_sock.recv(self.buffer_size)
-            except Exception as e:
-                print(e)
-                break
-            else:
-                if not received:
-                    break
+            client_data = client_sock.recv(self.buffer_size)
 
-                client_sock.sendall(received)
+            if not client_data:
+                break
+
+            if len(client_data) < self.buffer_size:
+                server_sock.sendall(client_data)
+                break
+
+            server_sock.sendall(client_data)
+
+        while True:
+            received = server_sock.recv(self.buffer_size)
+
+            if not received:
+                break
+
+            client_sock.sendall(received)
 
     def __recv_data(self, sock):
         result = b''
@@ -169,8 +135,9 @@ class ProxyServer:
 
         return result if len(result) > 0 else None
 
-    def __get_host_and_port(self, package):
+    def __get_conn_info(self, package):
         package_lines = package.split('\n')
+        is_https = package_lines[0].find('http') == -1
         host_line = ''
 
         for line in package_lines:
@@ -184,7 +151,7 @@ class ProxyServer:
         if ':' in full_url:
             host, port = full_url.split(':')
 
-        return host, int(port)
+        return host, int(port), is_https
 
         # TODO: Tests - разбора данных,
         # http server - module для тестов сайтов
@@ -196,35 +163,13 @@ class ProxyServer:
         pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_cert.encode())
 
-        ssl_generator = SSLGenerator(self.cert_ca, self.cert_key)
-
-        new_cert, private_key = ssl_generator.generate_same_cert_as(cert)
+        new_cert, private_key = self.ssl_generator.generate_same_cert_as(cert)
 
         return new_cert, private_key
 
 def main():
     server = ProxyServer()
     server.start('127.0.0.1', 8787)
-
-
-
-
-def test():
-    context = ssl.create_default_context()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    secure_sock = context.wrap_socket(sock, server_hostname='gist.github.com')
-    secure_sock.connect(('gist.github.com', 443))
-    der_cert = secure_sock.getpeercert(True)
-    pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
-    cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_cert.encode())
-
-    ssl_generator = SSLGenerator('rootCA.crt', 'rootCA.key')
-
-    new_cert, private_key = ssl_generator.generate_same_cert_as(cert)
-
-    with open('certificates/cert.crt', 'xb') as f:
-        f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, new_cert))
 
 
 if __name__ == '__main__':
