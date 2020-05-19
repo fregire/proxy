@@ -8,9 +8,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',
-                 cert_key='rootCA.key', buffer_size=2048,
+                 cert_key='rootCA.key', buffer_size=64000,
                  certs_path='certificates', threads_count=2):
-        self.serverSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sever_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.cert_ca = cert_ca
         self.cert_key = cert_key
         self.buffer_size = buffer_size
@@ -21,18 +21,17 @@ class ProxyServer:
             os.mkdir(certs_path)
 
     def start(self, host='localhost', port=8080):
-        self.serverSock.bind((host, port))
-        self.serverSock.listen()
-        executor = ThreadPoolExecutor(max_workers=self.threads_count)
+        self.sever_sock.bind((host, port))
+        self.sever_sock.listen()
+        executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
 
         with executor as e:
             while True:
-                client_sock, addr = self.serverSock.accept()
+                client_sock, addr = self.sever_sock.accept()
                 e.submit(self.__handle_client, client_sock)
 
     def __handle_client(self, client_sock):
-        print('Handling client')
-        client_data = self.__recv_data(client_sock)
+        client_data = self.__receive_data(client_sock)
         if not client_data:
             return None
 
@@ -44,8 +43,6 @@ class ProxyServer:
             self.__handle_https(client_sock, client_data, host, port)
         else:
             self.__handle_http(client_sock, client_data, host, port)
-
-        return "Success!"
 
     def __handle_http(self, client_sock, data, host, port):
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -61,9 +58,9 @@ class ProxyServer:
             client_sock.sendall(received)
 
         client_sock.close()
+        remote_sock.close()
 
     def __handle_https(self, client_sock, data, host, port):
-        print('Handling https')
         context = ssl.create_default_context()
         remote_sock = context.wrap_socket(socket.socket(socket.AF_INET,
                                                         socket.SOCK_STREAM),
@@ -100,36 +97,36 @@ class ProxyServer:
             remote_sock.close()
 
     def __communicate(self, client_sock, server_sock):
-        client_sock.settimeout(2)
         server_sock.settimeout(2)
+        client_sock.settimeout(2)
+
+        client_data = b''
+        while True:
+            data = client_sock.recv(self.buffer_size)
+
+            if not data:
+                break
+
+            if len(data) < self.buffer_size:
+                server_sock.sendall(data)
+                break
+
+            server_sock.sendall(data)
 
         while True:
-            client_data = client_sock.recv(self.buffer_size)
+            server_data = server_sock.recv(self.buffer_size)
 
-            if not client_data:
+            if not server_data:
                 break
 
-            if len(client_data) < self.buffer_size:
-                server_sock.sendall(client_data)
-                break
+            client_sock.sendall(server_data)
 
-            server_sock.sendall(client_data)
-
-        while True:
-            received = server_sock.recv(self.buffer_size)
-
-            if not received:
-                break
-
-            client_sock.sendall(received)
-
-    def __recv_data(self, sock):
+    def __receive_data(self, sock):
         result = b''
 
         while True:
             data = sock.recv(self.buffer_size)
-            result += data
-
+            result = b''.join([result, data])
             if not data or len(data) < self.buffer_size:
                 break
 
