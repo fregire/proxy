@@ -9,16 +9,17 @@ from concurrent.futures import ThreadPoolExecutor
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',
                  cert_key='rootCA.key', buffer_size=64000,
-                 certs_path='certificates', threads_count=2):
+                 certs_folder='certificates', threads_count=2):
         self.sever_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.cert_ca = cert_ca
         self.cert_key = cert_key
         self.buffer_size = buffer_size
         self.ssl_generator = SSLGenerator(cert_ca, cert_key)
         self.threads_count = 2 * os.cpu_count()
+        self.certs_folder = certs_folder
 
-        if not os.path.exists(certs_path):
-            os.mkdir(certs_path)
+        if not os.path.exists(certs_folder):
+            os.mkdir(certs_folder)
 
     def start(self, host='localhost', port=8080):
         self.sever_sock.bind((host, port))
@@ -40,7 +41,7 @@ class ProxyServer:
 
         # TODO: DETERMINE SAFE PORT
         if is_https:
-            self.__handle_https(client_sock, client_data, host, port)
+            self.__handle_https(client_sock, host, port)
         else:
             self.__handle_http(client_sock, client_data, host, port)
 
@@ -60,32 +61,21 @@ class ProxyServer:
         client_sock.close()
         remote_sock.close()
 
-    def __handle_https(self, client_sock, data, host, port):
+    def __handle_https(self, client_sock, host, port):
+        response_to_client = b'HTTP/1.1 200 Connection Established\r\n\r\n'
         context = ssl.create_default_context()
         remote_sock = context.wrap_socket(socket.socket(socket.AF_INET,
                                                         socket.SOCK_STREAM),
                                           server_hostname=host)
         remote_sock.connect((host, port))
+        client_sock.sendall(response_to_client)
 
-        client_sock.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
-
-        # Getting SSL certificate from remote server
         cert, key = self.__create_same_cert(remote_sock)
-        path_to_cert = f'certificates/{host}.crt'
-        path_to_key = f'certificates/{host}.key'
-
-        if not os.path.exists(path_to_cert):
-            with open(path_to_cert, 'x') as f:
-                f.write(crypto.dump_certificate(crypto.FILETYPE_PEM,
-                                                cert).decode())
-
-            with open(path_to_key, 'x') as f:
-                f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM,
-                                               key).decode())
+        cert_path, key_path = self.__create_cert_key_files(host, cert, key)
 
         sclient = ssl.wrap_socket(client_sock,
-                                  certfile=path_to_cert,
-                                  keyfile=path_to_key,
+                                  certfile=cert_path,
+                                  keyfile=key_path,
                                   server_side=True,
                                   ssl_version=ssl.PROTOCOL_TLS,
                                   do_handshake_on_connect=False)
@@ -96,11 +86,24 @@ class ProxyServer:
             sclient.close()
             remote_sock.close()
 
+    def __create_cert_key_files(self, file_name, cert, key):
+        cert_path = '{}/{}.crt'.format(self.certs_folder, file_name)
+        key_path = '{}/{}.key'.format(self.certs_folder, file_name)
+
+        if not os.path.exists(cert_path):
+            with open(cert_path, 'x') as f:
+                f.write(crypto.dump_certificate(crypto.FILETYPE_PEM,
+                                                cert).decode())
+
+            with open(key_path, 'x') as f:
+                f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM,
+                                               key).decode())
+        return cert_path, key_path
+
     def __communicate(self, client_sock, server_sock):
         server_sock.settimeout(2)
         client_sock.settimeout(2)
 
-        client_data = b''
         while True:
             data = client_sock.recv(self.buffer_size)
 
