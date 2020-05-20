@@ -8,18 +8,20 @@ from concurrent.futures import ThreadPoolExecutor
 
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',
-                 cert_key='rootCA.key', buffer_size=64000,
-                 certs_folder='certificates', threads_count=2):
+                 cert_key='rootCA.key',
+                 buffer_size=64000,
+                 certs_folder='certificates',
+                 threads_count=2 * os.cpu_count()):
         self.sever_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.cert_ca = cert_ca
         self.cert_key = cert_key
         self.buffer_size = buffer_size
         self.ssl_generator = SSLGenerator(cert_ca, cert_key)
-        self.threads_count = 2 * os.cpu_count()
+        self.threads_count = threads_count
         self.certs_folder = certs_folder
 
         if not os.path.exists(certs_folder):
-            os.mkdir(certs_folder)
+            os.makedirs(certs_folder, exist_ok=True)
 
     def start(self, host='localhost', port=8080):
         self.sever_sock.bind((host, port))
@@ -32,23 +34,23 @@ class ProxyServer:
                 e.submit(self.__handle_client, client_sock)
 
     def __handle_client(self, client_sock):
-        client_data = self.__receive_data(client_sock)
-        if not client_data:
-            return None
+        package = self.__get_first_data(client_sock)
+        host, port, is_https = self.__get_conn_info(package.decode())
 
-        package = client_data.decode()
-        host, port, is_https = self.__get_conn_info(package)
-
-        # TODO: DETERMINE SAFE PORT
         if is_https:
             self.__handle_https(client_sock, host, port)
         else:
-            self.__handle_http(client_sock, client_data, host, port)
+            self.__handle_http(client_sock, package, host, port)
 
-    def __handle_http(self, client_sock, data, host, port):
+    def __get_first_data(self, client_sock):
+        client_data = self.__receive_data(client_sock)
+
+        return client_data if client_data else None
+
+    def __handle_http(self, client_sock, client_data, host, port):
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         remote_sock.connect((host, port))
-        remote_sock.sendall(data)
+        remote_sock.sendall(client_data)
 
         while True:
             received = remote_sock.recv(self.buffer_size)
@@ -62,13 +64,14 @@ class ProxyServer:
         remote_sock.close()
 
     def __handle_https(self, client_sock, host, port):
-        response_to_client = b'HTTP/1.1 200 Connection Established\r\n\r\n'
+        response_message = b'HTTP/1.1 200 Connection Established\r\n\r\n'
         context = ssl.create_default_context()
         remote_sock = context.wrap_socket(socket.socket(socket.AF_INET,
                                                         socket.SOCK_STREAM),
                                           server_hostname=host)
         remote_sock.connect((host, port))
-        client_sock.sendall(response_to_client)
+        print(host)
+        client_sock.sendall(response_message)
 
         cert, key = self.__create_same_cert(remote_sock)
         cert_path, key_path = self.__create_cert_key_files(host, cert, key)
@@ -83,6 +86,8 @@ class ProxyServer:
         try:
             self.__communicate(sclient, remote_sock)
         finally:
+            os.remove(cert_path)
+            os.remove(key_path)
             sclient.close()
             remote_sock.close()
 
@@ -99,6 +104,15 @@ class ProxyServer:
                 f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM,
                                                key).decode())
         return cert_path, key_path
+
+    def __create_same_cert(self, remote_socket):
+        der_cert = remote_socket.getpeercert(True)
+        pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
+        cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_cert.encode())
+
+        new_cert, private_key = self.ssl_generator.generate_same_cert_as(cert)
+
+        return new_cert, private_key
 
     def __communicate(self, client_sock, server_sock):
         server_sock.settimeout(2)
@@ -157,15 +171,6 @@ class ProxyServer:
         # http server - module для тестов сайтов
         # requests - указать какие прокси серверы использовать и принимать данные
         # и проверять эти данные
-
-    def __create_same_cert(self, remote_socket):
-        der_cert = remote_socket.getpeercert(True)
-        pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
-        cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_cert.encode())
-
-        new_cert, private_key = self.ssl_generator.generate_same_cert_as(cert)
-
-        return new_cert, private_key
 
 def main():
     server = ProxyServer()
