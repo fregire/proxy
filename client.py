@@ -1,11 +1,9 @@
 import socket
 
-
-def main():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect(('localhost', 8888))
-    sock.send(b'Hello, world! Clien1')
-    sock.close()
-
-if __name__ == '__main__':
-    main()
+class Client:
+    def __init__(self, sock, ip, remote_host, remote_port):
+        self.socket = sock
+        self.ip = ip
+        self.remote_host = remote_host
+        self.remote_port = remote_port
+        self.secure_sock = None

@@ -6,6 +6,7 @@ from OpenSSL import crypto
 from ssl_generator import SSLGenerator
 from concurrent.futures import ThreadPoolExecutor
 from statistics import Statisitics
+from client import Client
 
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',
@@ -34,33 +35,28 @@ class ProxyServer:
         with executor as e:
             while True:
                 client_sock, addr = self.sever_sock.accept()
-                e.submit(self.__handle_client, (client_sock, addr))
+                e.submit(self.__handle_client, client_sock, addr)
 
-    def __handle_client(self, client_info):
-        client_sock = client_info[0]
-        client_ip = client_info[1][0]
+    def __handle_client(self, client_sock, addr):
+        client_ip = addr[0]
         package = self.__get_first_data(client_sock)
         host, port, is_https = self.__get_conn_info(package.decode())
+        client = Client(client_sock, client_ip, host, port)
 
         if is_https:
-            self.__handle_https(client_sock, host, port, client_ip)
+            self.__handle_https(client)
         else:
-            self.__handle_http(client_sock, package, host, port, client_ip)
+            self.__handle_http(client, package)
 
     def __get_first_data(self, client_sock):
         client_data = self.__receive_data(client_sock)
 
         return client_data if client_data else None
 
-    def __handle_http(self, client_sock, client_data, host, port, client_ip):
+    def __handle_http(self, client, package):
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        remote_sock.connect((host, port))
-        remote_sock.sendall(client_data)
-
-        self.statistics_lock.acquire()
-        self.statistics.update(client_ip, host, 0, len(client_data))
-        self.statistics.print_formatted_statistics()
-        self.statistics_lock.release()
+        remote_sock.connect((client.remote_host, client.remote_port))
+        remote_sock.sendall(package)
 
         try:
             while True:
@@ -68,41 +64,39 @@ class ProxyServer:
                 if not received:
                     break
 
-                client_sock.sendall(received)
-                self.statistics_lock.acquire()
-                self.statistics.update(client_ip, host, len(received), 0)
-                self.statistics.print_formatted_statistics()
-                self.statistics_lock.release()
+                client.socket.sendall(received)
         finally:
-            client_sock.close()
+            client.socket.close()
             remote_sock.close()
+            del client
 
-    def __handle_https(self, client_sock, host, port, client_ip):
+    def __handle_https(self, client):
         response_message = b'HTTP/1.1 200 Connection Established\r\n\r\n'
         context = ssl.create_default_context()
         remote_sock = context.wrap_socket(socket.socket(socket.AF_INET,
                                                         socket.SOCK_STREAM),
-                                          server_hostname=host)
-        remote_sock.connect((host, port))
-        client_sock.sendall(response_message)
+                                          server_hostname=client.remote_host)
+        remote_sock.connect((client.remote_host, client.remote_port))
+        client.socket.sendall(response_message)
 
         cert, key = self.__create_same_cert(remote_sock)
-        cert_path, key_path = self.__create_cert_key_files(host, cert, key)
+        cert_path, key_path = self.__create_cert_key_files(client.remote_host,
+                                                           cert, key)
 
-        sclient = ssl.wrap_socket(client_sock,
-                                  certfile=cert_path,
-                                  keyfile=key_path,
-                                  server_side=True,
-                                  ssl_version=ssl.PROTOCOL_TLS,
-                                  do_handshake_on_connect=False)
-
+        client.secure_sock = ssl.wrap_socket(client.socket,
+                                             certfile=cert_path,
+                                             keyfile=key_path,
+                                             server_side=True,
+                                             ssl_version=ssl.PROTOCOL_TLS,
+                                             do_handshake_on_connect=False)
         try:
-            self.__communicate(sclient, remote_sock, client_ip, host)
+            self.__communicate(client, remote_sock)
         finally:
             os.remove(cert_path)
             os.remove(key_path)
-            sclient.close()
+            client.secure_sock.close()
             remote_sock.close()
+            del client
 
     def __create_cert_key_files(self, file_name, cert, key):
         cert_path = '{}/{}.crt'.format(self.certs_folder, file_name)
@@ -127,39 +121,29 @@ class ProxyServer:
 
         return new_cert, private_key
 
-    def __communicate(self, client_sock, server_sock, client_ip, host):
-        server_sock.settimeout(2)
-        client_sock.settimeout(2)
+    def __communicate(self, client, remote_sock):
+        remote_sock.settimeout(2)
+        client.secure_sock.settimeout(2)
 
         while True:
-            data = client_sock.recv(self.buffer_size)
+            data = client.secure_sock.recv(self.buffer_size)
 
             if not data:
                 break
 
             if len(data) < self.buffer_size:
-                server_sock.sendall(data)
+                remote_sock.sendall(data)
                 break
 
-            server_sock.sendall(data)
-
-            self.statistics_lock.acquire()
-            self.statistics.update(client_ip, host, 0, len(data))
-            self.statistics.print_formatted_statistics()
-            self.statistics_lock.release()
+            remote_sock.sendall(data)
 
         while True:
-            server_data = server_sock.recv(self.buffer_size)
+            server_data = remote_sock.recv(self.buffer_size)
 
             if not server_data:
                 break
 
-            client_sock.sendall(server_data)
-
-            self.statistics_lock.acquire()
-            self.statistics.update(client_ip, host, len(server_data), 0)
-            self.statistics.print_formatted_statistics()
-            self.statistics_lock.release()
+            client.secure_sock.sendall(server_data)
 
     def __receive_data(self, sock):
         result = b''
