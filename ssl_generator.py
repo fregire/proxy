@@ -8,13 +8,13 @@ class SSLGenerator:
         self.ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM,
                                              open(path_ca_key).read())
 
-    def generate_same_cert_as(self, remote_cert):
+    def generate_same_cert_as(self, cert):
         cn = list(filter(lambda opt: opt[0] == b'CN',
-                  remote_cert.get_subject().get_components()))[0][1]
+                  cert.get_subject().get_components()))[0][1]
         san = b''
 
-        for i in range(remote_cert.get_extension_count()):
-            ext = remote_cert.get_extension(i)
+        for i in range(cert.get_extension_count()):
+            ext = cert.get_extension(i)
             if ext.get_short_name() == b'subjectAltName':
                 san += str(ext).encode()
 

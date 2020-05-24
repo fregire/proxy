@@ -58,10 +58,10 @@ class ProxyServer:
 
     def __handle_http(self, conn, package):
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        remote_sock.connect((conn.remote_host, conn.remote_port))
-        remote_sock.sendall(package)
-
         try:
+            remote_sock.connect((conn.remote_host, conn.remote_port))
+            remote_sock.sendall(package)
+
             while True:
                 received = remote_sock.recv(self.buffer_size)
 
@@ -69,6 +69,7 @@ class ProxyServer:
                     break
 
                 conn.socket.sendall(received)
+
                 self.__update_statistics(conn, len(received), 0)
                 self.print_statistics()
         finally:
@@ -77,10 +78,9 @@ class ProxyServer:
 
     def __handle_https(self, conn):
         response_message = b'HTTP/1.1 200 Connection Established\r\n\r\n'
-        context = ssl.create_default_context()
-        remote_sock = context.wrap_socket(socket.socket(socket.AF_INET,
-                                                        socket.SOCK_STREAM),
-                                          server_hostname=conn.remote_host)
+        remote_sock = ssl.create_default_context().wrap_socket(
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM),
+            server_hostname=conn.remote_host)
         remote_sock.connect((conn.remote_host, conn.remote_port))
         conn.socket.sendall(response_message)
 
@@ -121,7 +121,6 @@ class ProxyServer:
         der_cert = remote_socket.getpeercert(True)
         pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, pem_cert.encode())
-
         new_cert, private_key = self.ssl_generator.generate_same_cert_as(cert)
 
         return new_cert, private_key
@@ -145,6 +144,7 @@ class ProxyServer:
 
             self.__update_statistics(conn, 0, len(data))
             self.print_statistics()
+
             remote_sock.sendall(data)
 
         while True:
@@ -153,9 +153,10 @@ class ProxyServer:
             if not server_data:
                 break
 
-            conn.secure_sock.sendall(server_data)
             self.__update_statistics(conn, len(server_data), 0)
             self.print_statistics()
+
+            conn.secure_sock.sendall(server_data)
 
     def __update_statistics(self, client, received, sent):
         self.statistics_lock.acquire()
@@ -185,13 +186,8 @@ class ProxyServer:
     def get_conn_info(package):
         package_lines = package.split('\n')
         is_https = package_lines[0].find('http') == -1
-        host_line = ''
-
-        for line in package_lines:
-            if line.find('Host') >= 0:
-                host_line = line
-                break
-
+        host_line = next((line for line in package_lines
+                          if line.find('Host') >= 0), None)
         full_url = host_line.split()[1]
         port = 80
         host = full_url
