@@ -43,7 +43,9 @@ class ProxyServer:
         host, port, is_https = self.__get_conn_info(package.decode())
         client = Client(client_sock, client_ip, host, port)
 
-        self.__update_print_statistics(client, 0, len(package))
+        self.__update_statistics(client, 0, len(package))
+        self.print_statistics()
+
         if is_https:
             self.__handle_https(client)
         else:
@@ -67,7 +69,8 @@ class ProxyServer:
                     break
 
                 client.socket.sendall(received)
-                self.__update_print_statistics(client, len(received), 0)
+                self.__update_statistics(client, len(received), 0)
+                self.print_statistics()
         finally:
             client.socket.close()
             remote_sock.close()
@@ -136,7 +139,8 @@ class ProxyServer:
                 remote_sock.sendall(data)
                 break
 
-            self.__update_print_statistics(client, 0, len(data))
+            self.__update_statistics(client, 0, len(data))
+            self.print_statistics()
             remote_sock.sendall(data)
 
         while True:
@@ -146,17 +150,21 @@ class ProxyServer:
                 break
 
             client.secure_sock.sendall(server_data)
-            self.__update_print_statistics(client, len(server_data), 0)
+            self.__update_statistics(client, len(server_data), 0)
+            self.print_statistics()
 
-    def __update_print_statistics(self, client, received, sent):
+    def __update_statistics(self, client, received, sent):
+        self.statistics_lock.acquire()
+        self.statistics.update(client, received, sent)
+        self.statistics_lock.release()
+
+    def print_statistics(self):
         if os.name == 'nt':
             os.system('cls')
         else:
             os.system('clear')
-        self.statistics_lock.acquire()
-        self.statistics.update(client, received, sent)
+
         print(self.statistics.get_formatted_stats())
-        self.statistics_lock.release()
 
     def __receive_data(self, sock):
         result = b''
