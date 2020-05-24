@@ -13,7 +13,8 @@ class ProxyServer:
                  cert_key='rootCA.key',
                  buffer_size=64000,
                  certs_folder='certificates',
-                 threads_count=2 * os.cpu_count()):
+                 threads_count=2 * os.cpu_count(),
+                 show_logs=True):
         self.sever_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.cert_ca = cert_ca
         self.cert_key = cert_key
@@ -23,6 +24,7 @@ class ProxyServer:
         self.certs_folder = certs_folder
         self.statistics = Statistics()
         self.statistics_lock = threading.RLock()
+        self.show_logs = show_logs
 
         if not os.path.exists(certs_folder):
             os.makedirs(certs_folder, exist_ok=True)
@@ -44,7 +46,8 @@ class ProxyServer:
         conn = Connection(client_sock, conn_ip, host, port)
 
         self.__update_statistics(conn, 0, len(package))
-        self.print_statistics()
+        if self.show_logs:
+            self.print_statistics()
 
         if is_https:
             self.__handle_https(conn)
@@ -71,7 +74,9 @@ class ProxyServer:
                 conn.socket.sendall(received)
 
                 self.__update_statistics(conn, len(received), 0)
-                self.print_statistics()
+
+                if self.show_logs:
+                    self.print_statistics()
         finally:
             conn.socket.close()
             remote_sock.close()
@@ -143,7 +148,9 @@ class ProxyServer:
                 break
 
             self.__update_statistics(conn, 0, len(data))
-            self.print_statistics()
+
+            if self.show_logs:
+                self.print_statistics()
 
             remote_sock.sendall(data)
 
@@ -154,7 +161,9 @@ class ProxyServer:
                 break
 
             self.__update_statistics(conn, len(server_data), 0)
-            self.print_statistics()
+
+            if self.show_logs:
+                self.print_statistics()
 
             conn.secure_sock.sendall(server_data)
 
@@ -202,7 +211,7 @@ class ProxyServer:
         # и принимать данные. Затем проверять эти данные
 
 def main():
-    server = ProxyServer()
+    server = ProxyServer(show_logs=False)
     server.start('127.0.0.1', 8787)
 
 
