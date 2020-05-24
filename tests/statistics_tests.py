@@ -4,7 +4,7 @@ from connection import Connection
 import socket
 
 
-class Statistics_Tests(unittest.TestCase):
+class StatisticsTests(unittest.TestCase):
     def test_update(self):
         stat = Statistics()
         test_num = 100
