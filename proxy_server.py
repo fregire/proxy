@@ -5,7 +5,7 @@ import os
 from OpenSSL import crypto
 from ssl_generator import SSLGenerator
 from concurrent.futures import ThreadPoolExecutor
-from statistics import Statisitics
+from statistics import Statistics
 from client import Client
 
 class ProxyServer:
@@ -21,7 +21,7 @@ class ProxyServer:
         self.ssl_generator = SSLGenerator(cert_ca, cert_key)
         self.threads_count = threads_count
         self.certs_folder = certs_folder
-        self.statistics = Statisitics()
+        self.statistics = Statistics()
         self.statistics_lock = threading.RLock()
 
         if not os.path.exists(certs_folder):
@@ -43,6 +43,7 @@ class ProxyServer:
         host, port, is_https = self.__get_conn_info(package.decode())
         client = Client(client_sock, client_ip, host, port)
 
+        self.__update_print_statistics(client, 0, len(package))
         if is_https:
             self.__handle_https(client)
         else:
@@ -61,14 +62,15 @@ class ProxyServer:
         try:
             while True:
                 received = remote_sock.recv(self.buffer_size)
+
                 if not received:
                     break
 
                 client.socket.sendall(received)
+                self.__update_print_statistics(client, len(received), 0)
         finally:
             client.socket.close()
             remote_sock.close()
-            del client
 
     def __handle_https(self, client):
         response_message = b'HTTP/1.1 200 Connection Established\r\n\r\n'
@@ -96,7 +98,6 @@ class ProxyServer:
             os.remove(key_path)
             client.secure_sock.close()
             remote_sock.close()
-            del client
 
     def __create_cert_key_files(self, file_name, cert, key):
         cert_path = '{}/{}.crt'.format(self.certs_folder, file_name)
@@ -122,8 +123,8 @@ class ProxyServer:
         return new_cert, private_key
 
     def __communicate(self, client, remote_sock):
-        remote_sock.settimeout(2)
-        client.secure_sock.settimeout(2)
+        remote_sock.settimeout(3)
+        client.secure_sock.settimeout(3)
 
         while True:
             data = client.secure_sock.recv(self.buffer_size)
@@ -135,6 +136,7 @@ class ProxyServer:
                 remote_sock.sendall(data)
                 break
 
+            self.__update_print_statistics(client, 0, len(data))
             remote_sock.sendall(data)
 
         while True:
@@ -144,6 +146,17 @@ class ProxyServer:
                 break
 
             client.secure_sock.sendall(server_data)
+            self.__update_print_statistics(client, len(server_data), 0)
+
+    def __update_print_statistics(self, client, received, sent):
+        if os.name == 'nt':
+            os.system('cls')
+        else:
+            os.system('clear')
+        self.statistics_lock.acquire()
+        self.statistics.update(client, received, sent)
+        print(self.statistics.get_formatted_stats())
+        self.statistics_lock.release()
 
     def __receive_data(self, sock):
         result = b''
