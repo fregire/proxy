@@ -6,7 +6,7 @@ from OpenSSL import crypto
 from ssl_generator import SSLGenerator
 from concurrent.futures import ThreadPoolExecutor
 from statistics import Statistics
-from client import Client
+from connection import Connection
 
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',
@@ -38,27 +38,27 @@ class ProxyServer:
                 e.submit(self.__handle_client, client_sock, addr)
 
     def __handle_client(self, client_sock, addr):
-        client_ip = addr[0]
+        conn_ip = addr[0]
         package = self.__get_first_data(client_sock)
-        host, port, is_https = self.__get_conn_info(package.decode())
-        client = Client(client_sock, client_ip, host, port)
+        host, port, is_https = self.get_conn_info(package.decode())
+        conn = Connection(client_sock, conn_ip, host, port)
 
-        self.__update_statistics(client, 0, len(package))
+        self.__update_statistics(conn, 0, len(package))
         self.print_statistics()
 
         if is_https:
-            self.__handle_https(client)
+            self.__handle_https(conn)
         else:
-            self.__handle_http(client, package)
+            self.__handle_http(conn, package)
 
     def __get_first_data(self, client_sock):
         client_data = self.__receive_data(client_sock)
 
         return client_data if client_data else None
 
-    def __handle_http(self, client, package):
+    def __handle_http(self, conn, package):
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        remote_sock.connect((client.remote_host, client.remote_port))
+        remote_sock.connect((conn.remote_host, conn.remote_port))
         remote_sock.sendall(package)
 
         try:
@@ -68,38 +68,39 @@ class ProxyServer:
                 if not received:
                     break
 
-                client.socket.sendall(received)
-                self.__update_statistics(client, len(received), 0)
+                conn.socket.sendall(received)
+                self.__update_statistics(conn, len(received), 0)
                 self.print_statistics()
         finally:
-            client.socket.close()
+            conn.socket.close()
             remote_sock.close()
 
-    def __handle_https(self, client):
+    def __handle_https(self, conn):
         response_message = b'HTTP/1.1 200 Connection Established\r\n\r\n'
         context = ssl.create_default_context()
         remote_sock = context.wrap_socket(socket.socket(socket.AF_INET,
                                                         socket.SOCK_STREAM),
-                                          server_hostname=client.remote_host)
-        remote_sock.connect((client.remote_host, client.remote_port))
-        client.socket.sendall(response_message)
+                                          server_hostname=conn.remote_host)
+        remote_sock.connect((conn.remote_host, conn.remote_port))
+        conn.socket.sendall(response_message)
 
         cert, key = self.__create_same_cert(remote_sock)
-        cert_path, key_path = self.__create_cert_key_files(client.remote_host,
+        cert_path, key_path = self.__create_cert_key_files(conn.remote_host,
                                                            cert, key)
 
-        client.secure_sock = ssl.wrap_socket(client.socket,
-                                             certfile=cert_path,
-                                             keyfile=key_path,
-                                             server_side=True,
-                                             ssl_version=ssl.PROTOCOL_TLS,
-                                             do_handshake_on_connect=False)
+        conn.secure_sock = ssl.wrap_socket(conn.socket,
+                                           certfile=cert_path,
+                                           keyfile=key_path,
+                                           server_side=True,
+                                           ssl_version=ssl.PROTOCOL_TLS,
+                                           do_handshake_on_connect=False)
         try:
-            self.__communicate(client, remote_sock)
+            self.__communicate(conn, remote_sock)
         finally:
             os.remove(cert_path)
             os.remove(key_path)
-            client.secure_sock.close()
+            conn.socket.close()
+            conn.secure_sock.close()
             remote_sock.close()
 
     def __create_cert_key_files(self, file_name, cert, key):
@@ -125,12 +126,15 @@ class ProxyServer:
 
         return new_cert, private_key
 
-    def __communicate(self, client, remote_sock):
+    def __communicate(self, conn, remote_sock):
+        if not conn.secure_sock:
+            return None
+
         remote_sock.settimeout(3)
-        client.secure_sock.settimeout(3)
+        conn.secure_sock.settimeout(3)
 
         while True:
-            data = client.secure_sock.recv(self.buffer_size)
+            data = conn.secure_sock.recv(self.buffer_size)
 
             if not data:
                 break
@@ -139,7 +143,7 @@ class ProxyServer:
                 remote_sock.sendall(data)
                 break
 
-            self.__update_statistics(client, 0, len(data))
+            self.__update_statistics(conn, 0, len(data))
             self.print_statistics()
             remote_sock.sendall(data)
 
@@ -149,8 +153,8 @@ class ProxyServer:
             if not server_data:
                 break
 
-            client.secure_sock.sendall(server_data)
-            self.__update_statistics(client, len(server_data), 0)
+            conn.secure_sock.sendall(server_data)
+            self.__update_statistics(conn, len(server_data), 0)
             self.print_statistics()
 
     def __update_statistics(self, client, received, sent):
@@ -177,7 +181,8 @@ class ProxyServer:
 
         return result if len(result) > 0 else None
 
-    def __get_conn_info(self, package):
+    @staticmethod
+    def get_conn_info(package):
         package_lines = package.split('\n')
         is_https = package_lines[0].find('http') == -1
         host_line = ''
@@ -197,8 +202,8 @@ class ProxyServer:
 
         # TODO: Tests - разбора данных,
         # http server - module для тестов сайтов
-        # requests - указать какие прокси серверы использовать и принимать данные
-        # и проверять эти данные
+        # requests - указать какие прокси серверы использовать
+        # и принимать данные. Затем проверять эти данные
 
 def main():
     server = ProxyServer()
