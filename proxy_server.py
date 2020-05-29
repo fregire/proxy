@@ -3,10 +3,10 @@ import ssl
 import threading
 import os
 from OpenSSL import crypto
-from ssl_generator import SSLGenerator
+from modules.ssl_generator import SSLGenerator
 from concurrent.futures import ThreadPoolExecutor
-from statistics import Statistics
-from connection import Connection
+from modules.statistics import Statistics
+from modules.connection import Connection
 
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',

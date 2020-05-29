@@ -1,6 +1,6 @@
 import unittest
-from statistics import Statistics
-from connection import Connection
+from modules.statistics import Statistics
+from modules.connection import Connection
 import socket
 
 
@@ -26,7 +26,7 @@ class StatisticsTests(unittest.TestCase):
         stat.update(conn_second, 0, test_num)
 
         self.assertDictEqual({'127.0.0.1': {'anytask.org': (test_num * 2, test_num)},
-                              '187.0.1.128': {'testing.ru' : (0, test_num)}},
+                              '187.0.1.128': {'testing.ru': (0, test_num)}},
                              stat.clients)
         conn_first.socket.close()
         conn_second.socket.close()
