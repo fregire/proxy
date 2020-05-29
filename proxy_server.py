@@ -8,6 +8,10 @@ from concurrent.futures import ThreadPoolExecutor
 from modules.statistics import Statistics
 from modules.connection import Connection
 
+__version__ = '1.0'
+__author__ = 'Gilmutdinov Daniil'
+__email__ = 'fregire@yandex.ru'
+
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',
                  cert_key='rootCA.key',
