@@ -31,6 +31,7 @@ class ProxyServer:
 
     def start(self, host='localhost', port=8080):
         self.sever_sock.bind((host, port))
+
         self.sever_sock.listen()
 
         executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
@@ -45,6 +46,7 @@ class ProxyServer:
         package = self.__get_first_data(client_sock)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
+        print(host, port, is_https)
 
         self.__update_statistics(conn, 0, len(package))
         if self.show_logs:
