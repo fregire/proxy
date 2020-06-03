@@ -35,7 +35,7 @@ class ProxyServer:
         if not os.path.exists(certs_folder):
             os.makedirs(certs_folder, exist_ok=True)
 
-    def start(self, host='localhost', port=8080):
+    def start(self, host='0.0.0.0', port=8918):
         self.sever_sock.bind((host, port))
         self.sever_sock.listen()
         self.sever_sock.settimeout(10)
@@ -46,8 +46,9 @@ class ProxyServer:
                 try:
                     try:
                         client_sock, addr = self.sever_sock.accept()
-                    except OSError:
-                        continue
+                    except:
+                        print(e)
+
                     e.submit(self.__handle_client, client_sock, addr)
                 except KeyboardInterrupt:
                     executor.shutdown()
@@ -195,7 +196,6 @@ class ProxyServer:
         self.sent_bytes += sent
         self.statistics_lock.release()
 
-
     def __receive_data(self, sock):
         result = b''
 
@@ -229,7 +229,7 @@ class ProxyServer:
 
 def main():
     server = ProxyServer(show_logs=True)
-    server.start('127.0.0.1', 8787)
+    server.start()
 
 
 if __name__ == '__main__':
