@@ -3,8 +3,12 @@
 class Statistics:
     def __init__(self):
         self.clients = {}
+        self.recv_bytes = 0
+        self.sent_bytes = 0
 
     def update(self, conn, recv_data, sent_data):
+        self.recv_bytes += recv_data
+        self.sent_bytes += sent_data
         ip = conn.ip
         host = conn.remote_host
         if ip not in self.clients:
