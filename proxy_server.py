@@ -7,6 +7,7 @@ from modules.ssl_generator import SSLGenerator
 from concurrent.futures import ThreadPoolExecutor
 from modules.statistics import Statistics
 from modules.connection import Connection
+import argparse
 
 __version__ = '1.0'
 __author__ = 'Gilmutdinov Daniil'
@@ -18,6 +19,7 @@ class ProxyServer:
                  buffer_size=64000,
                  certs_folder='certificates',
                  threads_count=2 * os.cpu_count(),
+                 verbose=False,
                  show_logs=True):
         self.sever_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.cert_ca = cert_ca
@@ -30,15 +32,25 @@ class ProxyServer:
         self.sent_bytes = 0
         self.statistics_lock = threading.RLock()
         self.show_logs = show_logs
-        self.verbose = False
+        self.verbose = verbose
+
+        if not os.path.isfile(cert_ca):
+            raise FileNotFoundError()
+
+        if not os.path.isfile(cert_key):
+            raise FileNotFoundError()
 
         if not os.path.exists(certs_folder):
             os.makedirs(certs_folder, exist_ok=True)
 
-    def start(self, host='0.0.0.0', port=8918):
+    def start(self, host='0.0.0.0', port=0):
+        curr_ip = socket.gethostbyname(socket.gethostname())
         self.sever_sock.bind((host, port))
         self.sever_sock.listen()
-        self.sever_sock.settimeout(10)
+        self.sever_sock.settimeout(0)
+        print('Proxy is running on ',
+              curr_ip, ':',
+              self.sever_sock.getsockname()[1], sep='')
         executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
 
         with executor as e:
@@ -46,14 +58,13 @@ class ProxyServer:
                 try:
                     try:
                         client_sock, addr = self.sever_sock.accept()
-                    except:
-                        print(e)
-
+                    except OSError:
+                        continue
                     e.submit(self.__handle_client, client_sock, addr)
                 except KeyboardInterrupt:
                     executor.shutdown()
-                    print(self.recv_bytes)
-                    print(self.sent_bytes)
+                    print('Получено байт: ', self.recv_bytes)
+                    print('Байт отправлено: ', self.sent_bytes)
                     break
 
     def __handle_client(self, client_sock, addr):
@@ -61,6 +72,7 @@ class ProxyServer:
         package = self.__get_first_data(client_sock)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
+
         if is_https:
             self.__handle_https(conn)
         else:
@@ -75,10 +87,7 @@ class ProxyServer:
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         if self.show_logs:
-            if self.verbose:
-                print(package.decode())
-            else:
-                print(self.get_log_info(conn, package.decode()))
+            print(self.get_log_info(conn, package.decode()))
 
         try:
             remote_sock.connect((conn.remote_host, conn.remote_port))
@@ -90,9 +99,9 @@ class ProxyServer:
 
                 if not received:
                     break
-                self.update_stats(len(received), 0)
 
                 conn.socket.sendall(received)
+                self.update_stats(len(received), 0)
         finally:
             conn.socket.close()
             remote_sock.close()
@@ -160,35 +169,39 @@ class ProxyServer:
             if not data:
                 break
 
-            self.update_stats(0, len(data))
-
             if len(data) < self.buffer_size:
                 remote_sock.sendall(data)
+                self.update_stats(0, len(data))
                 break
 
             remote_sock.sendall(data)
+            self.update_stats(0, len(data))
 
         if self.show_logs:
-            if self.verbose:
-                print(request.decode())
-            else:
-                print(self.get_log_info(conn, request.decode()))
+            print(self.get_log_info(conn, request.decode()))
 
         while True:
             server_data = remote_sock.recv(self.buffer_size)
             response += server_data
 
-            self.update_stats(len(server_data), 0)
-
             if not server_data:
                 break
 
             conn.secure_sock.sendall(server_data)
+            self.update_stats(len(server_data), 0)
 
     def get_log_info(self, conn, package):
-        request = package.split('\n')[0]
+        if self.verbose:
+            return package
 
-        return '{} {}'.format(conn.ip, request)
+        request_row = package.split('\n')[0]
+        components = request_row.split()
+        protocol = 'https:/' if conn.secure_sock else ''
+        method = components[0]
+        url = components[1]
+        formatted_request = '{} {}{}'.format(method, protocol, url)
+
+        return '{} {}'.format(conn.ip, formatted_request)
 
     def update_stats(self, recv, sent):
         self.statistics_lock.acquire()
@@ -227,9 +240,29 @@ class ProxyServer:
         # requests - указать какие прокси серверы использовать
         # и принимать данные. Затем проверять эти данные
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--verbose',
+                        help='Shows full request package in logs',
+                        action='store_true')
+    parser.add_argument('--no-log',
+                        help='Don\'t show logs',
+                        action='store_true')
+    parser.add_argument('-p',
+                        '--port',
+                        type=int,
+                        help='Port for proxy')
+
+    return parser.parse_args()
+
 def main():
-    server = ProxyServer(show_logs=True)
-    server.start()
+    args = parse_args()
+    verbose = args.verbose
+    port = args.port if args.port else 0
+    log = not args.no_log
+
+    server = ProxyServer(verbose=verbose, show_logs=log)
+    server.start(port=port)
 
 
 if __name__ == '__main__':

@@ -2,3 +2,6 @@ venv/*
 .rnd
 .idea
 certificates/*
+__pycache__/*
+.rnd
+venv/*
