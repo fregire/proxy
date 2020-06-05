@@ -84,7 +84,7 @@ class ProxyServer:
         package = self.__get_first_data(client_sock)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
-
+        print(package)
         if is_https:
             self.__handle_https(conn)
         else:
@@ -108,7 +108,6 @@ class ProxyServer:
 
             while True:
                 received = remote_sock.recv(self.buffer_size)
-
                 if not received:
                     break
 
@@ -275,7 +274,6 @@ def main():
 
     server = ProxyServer(verbose=verbose, show_logs=log)
     ip, port = server.start(port=port)
-    print(ip, port)
 
 
 if __name__ == '__main__':

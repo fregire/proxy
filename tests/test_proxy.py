@@ -58,15 +58,27 @@ class ProxyServerTests(unittest.TestCase):
         self.assertEqual(proxy.sever_sock.fileno(), -1)
         self.assertIsNone(proxy.executor)
 
-    def test_handling_clients(self):
-        url = 'http://{}:{}/'.format(WEB_SERVER_ADDRESS[0],
+    def test_handling_clients_http(self):
+        url = 'http://{}:{}'.format(WEB_SERVER_ADDRESS[0],
                                      WEB_SERVER_ADDRESS[1])
         print('Starting')
         server = HTTPServer(WEB_SERVER_ADDRESS, CGIHTTPRequestHandler)
+        proxy = ProxyServer()
+        host, port = proxy.start()
+        proxy_url = 'http://{}:{}'.format(host, port)
         th = threading.Thread(target=server.serve_forever)
         th.start()
 
-        self.assertEqual(requests.get('http://localhost:8081/').status_code, 200)
+        proxies = {
+            'http': proxy_url,
+            'https': proxy_url
+        }
+
+        r = requests.get(url, proxies=proxies)
+        self.assertEqual(r.status_code, 404)
+        proxy.stop()
         server.shutdown()
         th.join()
+
+
 
