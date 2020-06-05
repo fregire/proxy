@@ -5,7 +5,6 @@ import os
 from OpenSSL import crypto
 from modules.ssl_generator import SSLGenerator
 from concurrent.futures import ThreadPoolExecutor
-from modules.statistics import Statistics
 from modules.connection import Connection
 import argparse
 
@@ -44,13 +43,19 @@ class ProxyServer:
             os.makedirs(certs_folder, exist_ok=True)
 
     def start(self, host='0.0.0.0', port=0):
-        curr_ip = socket.gethostbyname(socket.gethostname())
         self.sever_sock.bind((host, port))
         self.sever_sock.listen()
         self.sever_sock.settimeout(0)
-        print('Proxy is running on ',
+        curr_ip = socket.gethostbyname(socket.gethostname())
+        curr_port = self.sever_sock.getsockname()[1]
+        print('Прокси запущен по адресу: ',
               curr_ip, ':',
-              self.sever_sock.getsockname()[1], sep='')
+              curr_port, sep='')
+        threading.Thread(target=self.__accept_clients).start()
+
+        return curr_ip, curr_port
+
+    def __accept_clients(self):
         executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
 
         with executor as e:
@@ -60,6 +65,7 @@ class ProxyServer:
                         client_sock, addr = self.sever_sock.accept()
                     except OSError:
                         continue
+                    print(threading.active_count())
                     e.submit(self.__handle_client, client_sock, addr)
                 except KeyboardInterrupt:
                     executor.shutdown()
@@ -262,7 +268,8 @@ def main():
     log = not args.no_log
 
     server = ProxyServer(verbose=verbose, show_logs=log)
-    server.start(port=port)
+    ip, port = server.start(port=port)
+    print(ip, port)
 
 
 if __name__ == '__main__':
