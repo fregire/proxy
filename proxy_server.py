@@ -32,6 +32,7 @@ class ProxyServer:
         self.statistics_lock = threading.RLock()
         self.show_logs = show_logs
         self.verbose = verbose
+        self.executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
 
         if not os.path.isfile(cert_ca):
             raise FileNotFoundError()
@@ -48,30 +49,35 @@ class ProxyServer:
         self.sever_sock.settimeout(0)
         curr_ip = socket.gethostbyname(socket.gethostname())
         curr_port = self.sever_sock.getsockname()[1]
-        print('Прокси запущен по адресу: ',
-              curr_ip, ':',
-              curr_port, sep='')
+
+        if self.show_logs:
+            print('Прокси запущен по адресу: ',
+                  curr_ip, ':',
+                  curr_port, sep='')
+
         threading.Thread(target=self.__accept_clients).start()
 
         return curr_ip, curr_port
 
     def __accept_clients(self):
-        executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
-
-        with executor as e:
-            while True:
+        with self.executor as e:
+            while self.executor:
                 try:
                     try:
                         client_sock, addr = self.sever_sock.accept()
                     except OSError:
                         continue
-                    print(threading.active_count())
                     e.submit(self.__handle_client, client_sock, addr)
                 except KeyboardInterrupt:
-                    executor.shutdown()
+                    self.executor.shutdown()
                     print('Получено байт: ', self.recv_bytes)
                     print('Байт отправлено: ', self.sent_bytes)
                     break
+
+    def stop(self):
+        self.executor.shutdown()
+        self.executor = None
+        self.sever_sock.close()
 
     def __handle_client(self, client_sock, addr):
         conn_ip = addr[0]
@@ -264,7 +270,7 @@ def parse_args():
 def main():
     args = parse_args()
     verbose = args.verbose
-    port = args.port if args.port else 0
+    port = args.port if args.port else 3228
     log = not args.no_log
 
     server = ProxyServer(verbose=verbose, show_logs=log)

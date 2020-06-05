@@ -2,16 +2,24 @@ import unittest
 import os
 import sys
 import requests
+import socket
+import threading
+import time
+from http.server import HTTPServer, CGIHTTPRequestHandler, ThreadingHTTPServer
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              os.path.pardir))
 from proxy_server import ProxyServer
 
 PACKAGES_DIR = 'tests/packages/'
+ROOT_CRT = 'rootCA.crt'
+ROOT_KEY = 'rootCA.key'
+CERTIFICATES_FOLDER = 'certificates'
+WEB_SERVER_ADDRESS = ('localhost', 8081)
 
 class ProxyServerTests(unittest.TestCase):
     def test_init_options(self):
-        server = ProxyServer(cert_ca='rootCA.crt', cert_key='rootCA.key',
-                             certs_folder='certificates')
+        server = ProxyServer(cert_ca=ROOT_CRT, cert_key=ROOT_KEY,
+                             certs_folder=CERTIFICATES_FOLDER)
         certs_path_exist = False
 
         if os.path.exists(server.certs_folder):
@@ -37,5 +45,28 @@ class ProxyServerTests(unittest.TestCase):
             self.assertEqual(443, port)
             self.assertEqual(True, is_https)
 
-    def test_communication(self):
-        pass
+    def test_starting_stopping_server(self):
+        proxy = ProxyServer()
+        expected_host = socket.gethostbyname(socket.gethostname())
+        expected_port = 1111
+
+        host, port = proxy.start(host='0.0.0.0', port=expected_port)
+        proxy.stop()
+
+        self.assertEqual(host, expected_host)
+        self.assertEqual(port, expected_port)
+        self.assertEqual(proxy.sever_sock.fileno(), -1)
+        self.assertIsNone(proxy.executor)
+
+    def test_handling_clients(self):
+        url = 'http://{}:{}/'.format(WEB_SERVER_ADDRESS[0],
+                                     WEB_SERVER_ADDRESS[1])
+        print('Starting')
+        server = HTTPServer(WEB_SERVER_ADDRESS, CGIHTTPRequestHandler)
+        th = threading.Thread(target=server.serve_forever)
+        th.start()
+
+        self.assertEqual(requests.get('http://localhost:8081/').status_code, 200)
+        server.shutdown()
+        th.join()
+
