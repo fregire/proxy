@@ -12,6 +12,7 @@ __version__ = '1.0'
 __author__ = 'Gilmutdinov Daniil'
 __email__ = 'fregire@yandex.ru'
 
+
 class ProxyServer:
     def __init__(self, cert_ca='rootCA.crt',
                  cert_key='rootCA.key',
@@ -84,7 +85,7 @@ class ProxyServer:
         package = self.__get_first_data(client_sock)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
-        
+
         if is_https:
             self.__handle_https(conn)
         else:
@@ -272,6 +273,7 @@ class ProxyServer:
 
         return host, int(port), is_https
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--verbose',
@@ -286,6 +288,7 @@ def parse_args():
                         help='Порт для прокси')
 
     return parser.parse_args()
+
 
 def main():
     args = parse_args()

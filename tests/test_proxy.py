@@ -21,6 +21,7 @@ HTTP_PACKAGE = 'tests/packages/http_package'
 HTTPS_PACKAGE = 'tests/packages/https_package'
 CLIENT_IP = '156.90.34.123'
 BUFFER_SIZE = 1024
+SUCCESS_MESSAGE = b'HTTP/1.1 200 Connection Established\r\n\r\n'
 
 class ProxyServerTests(unittest.TestCase):
     def test_init_options(self):
@@ -112,12 +113,10 @@ class ProxyServerTests(unittest.TestCase):
                 break
             response += data
 
-        self.assertEqual(b'HTTP/1.1 200 Connection Established\r\n\r\n',
-                         response)
+        self.assertEqual(SUCCESS_MESSAGE, response)
         serv.close()
         proxy.stop()
         th.join()
-
 
     def test_log_info(self):
         proxy = ProxyServer()
