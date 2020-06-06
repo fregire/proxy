@@ -5,16 +5,20 @@ import requests
 import socket
 import threading
 import time
-from http.server import HTTPServer, CGIHTTPRequestHandler, ThreadingHTTPServer
+
+from http.server import HTTPServer, CGIHTTPRequestHandler
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              os.path.pardir))
 from proxy_server import ProxyServer
+from modules import connection
 
-PACKAGES_DIR = 'tests/packages/'
 ROOT_CRT = 'rootCA.crt'
 ROOT_KEY = 'rootCA.key'
 CERTIFICATES_FOLDER = 'certificates'
 WEB_SERVER_ADDRESS = ('localhost', 8081)
+HTTP_PACKAGE = 'tests/packages/http_package'
+HTTPS_PACKAGE = 'tests/packages/https_package'
+CLIENT_IP = '156.90.34.123'
 
 class ProxyServerTests(unittest.TestCase):
     def test_init_options(self):
@@ -28,7 +32,7 @@ class ProxyServerTests(unittest.TestCase):
         self.assertEqual(certs_path_exist, True)
 
     def test_http_package_parsing(self):
-        with open(PACKAGES_DIR + 'http_package') as f:
+        with open(HTTP_PACKAGE) as f:
             package = f.read().encode()
             host, port, is_https = ProxyServer.get_conn_info(package)
 
@@ -37,7 +41,7 @@ class ProxyServerTests(unittest.TestCase):
             self.assertEqual(False, is_https)
 
     def test_https_package_parsing(self):
-        with open(PACKAGES_DIR + 'https_package') as f:
+        with open(HTTPS_PACKAGE) as f:
             package = f.read().encode()
             host, port, is_https = ProxyServer.get_conn_info(package)
 
@@ -50,7 +54,11 @@ class ProxyServerTests(unittest.TestCase):
         expected_host = socket.gethostbyname(socket.gethostname())
         expected_port = 1111
 
-        host, port = proxy.start(host='0.0.0.0', port=expected_port)
+        th = threading.Thread(target=proxy.start,
+                              kwargs={'host': '0.0.0.0', 'port': expected_port})
+        th.start()
+        time.sleep(0.1)
+        host, port = proxy.get_addr()
         proxy.stop()
 
         self.assertEqual(host, expected_host)
@@ -58,27 +66,40 @@ class ProxyServerTests(unittest.TestCase):
         self.assertEqual(proxy.sever_sock.fileno(), -1)
         self.assertIsNone(proxy.executor)
 
-    def test_handling_clients_http(self):
+    def test_handling_clients(self):
         url = 'http://{}:{}'.format(WEB_SERVER_ADDRESS[0],
                                      WEB_SERVER_ADDRESS[1])
         print('Starting')
         server = HTTPServer(WEB_SERVER_ADDRESS, CGIHTTPRequestHandler)
         proxy = ProxyServer()
-        host, port = proxy.start()
-        proxy_url = 'http://{}:{}'.format(host, port)
-        th = threading.Thread(target=server.serve_forever)
-        th.start()
+        proxy_th = threading.Thread(target=proxy.start)
+        http_th = threading.Thread(target=server.serve_forever)
+        proxy_th.start()
+        http_th.start()
 
+        proxy_url = 'http://{}:{}'.format(*proxy.get_addr())
         proxies = {
-            'http': proxy_url,
-            'https': proxy_url
+            'http': proxy_url
         }
 
         r = requests.get(url, proxies=proxies)
-        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.status_code, 200)
         proxy.stop()
         server.shutdown()
-        th.join()
+        http_th.join()
+        proxy_th.join()
 
+    def test_log_info(self):
+        proxy = ProxyServer()
+        conn = connection.Connection(None, CLIENT_IP, 'scratchpads.eu', 80)
+
+        with open(HTTP_PACKAGE) as f:
+            package = f.read()
+
+        result = proxy.get_log_info(conn, package)
+        self.assertEqual(result,
+                         CLIENT_IP + ' POST '
+                         'http://scratchpads.eu/modules/'
+                         'statistics/statistics.php')
 
 

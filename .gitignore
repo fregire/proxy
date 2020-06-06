@@ -5,3 +5,4 @@ certificates/*
 __pycache__/*
 .rnd
 venv/*
+.coverage

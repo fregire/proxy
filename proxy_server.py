@@ -47,19 +47,10 @@ class ProxyServer:
         self.sever_sock.bind((host, port))
         self.sever_sock.listen()
         self.sever_sock.settimeout(0)
-        curr_ip = socket.gethostbyname(socket.gethostname())
-        curr_port = self.sever_sock.getsockname()[1]
+        host, port = self.get_addr()
 
-        if self.show_logs:
-            print('Прокси запущен по адресу: ',
-                  curr_ip, ':',
-                  curr_port, sep='')
+        print('Прокси работает на ', '{}:{}'.format(host, port))
 
-        threading.Thread(target=self.__accept_clients).start()
-
-        return curr_ip, curr_port
-
-    def __accept_clients(self):
         with self.executor as e:
             while self.executor:
                 try:
@@ -69,10 +60,19 @@ class ProxyServer:
                         continue
                     e.submit(self.__handle_client, client_sock, addr)
                 except KeyboardInterrupt:
+                    self.show_final_stats()
                     self.executor.shutdown()
-                    print('Получено байт: ', self.recv_bytes)
-                    print('Байт отправлено: ', self.sent_bytes)
                     break
+
+    def get_addr(self):
+        curr_ip = socket.gethostbyname(socket.gethostname())
+        curr_port = self.sever_sock.getsockname()[1]
+
+        return curr_ip, curr_port
+
+    def show_final_stats(self):
+        print('Получено байт: ', self.recv_bytes)
+        print('Байт отправлено: ', self.sent_bytes)
 
     def stop(self):
         self.executor.shutdown()
@@ -84,7 +84,7 @@ class ProxyServer:
         package = self.__get_first_data(client_sock)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
-        print(package)
+
         if is_https:
             self.__handle_https(conn)
         else:
@@ -99,10 +99,15 @@ class ProxyServer:
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         if self.show_logs:
-            print(self.get_log_info(conn, package.decode()))
+            log = self.get_log_info(conn, package.decode())
+            if log:
+                print(log)
 
         try:
             remote_sock.connect((conn.remote_host, conn.remote_port))
+            package = self.change_to_relative_path(package.decode(),
+                                                   conn, False).encode()
+
             remote_sock.sendall(package)
             self.update_stats(0, len(package))
 
@@ -116,6 +121,25 @@ class ProxyServer:
         finally:
             conn.socket.close()
             remote_sock.close()
+
+    @staticmethod
+    def change_to_relative_path(package, conn, is_https):
+        protocol = 'http'
+        if is_https:
+            protocol = 'https'
+
+        abs_url_host = '{}://{}:{}'.format(protocol,
+                                           conn.remote_host,
+                                           conn.remote_port)
+        abs_url = '{}://{}'.format(protocol,
+                                   conn.remote_host)
+
+        if package.find(abs_url_host) > -1:
+            package = package.replace(abs_url_host, '')
+        elif package.find(abs_url) > -1:
+            package = package.replace(abs_url, '')
+
+        return package
 
     def __handle_https(self, conn):
         response_message = b'HTTP/1.1 200 Connection Established\r\n\r\n'
@@ -189,7 +213,9 @@ class ProxyServer:
             self.update_stats(0, len(data))
 
         if self.show_logs:
-            print(self.get_log_info(conn, request.decode()))
+            log = self.get_log_info(conn, request.decode())
+            if log:
+                print(log)
 
         while True:
             server_data = remote_sock.recv(self.buffer_size)
@@ -209,7 +235,7 @@ class ProxyServer:
         components = request_row.split()
         protocol = 'https:/' if conn.secure_sock else ''
         method = components[0]
-        url = components[1]
+        url = conn.remote_host + components[1] if conn.secure_sock else components[1]
         formatted_request = '{} {}{}'.format(method, protocol, url)
 
         return '{} {}'.format(conn.ip, formatted_request)
@@ -246,23 +272,18 @@ class ProxyServer:
 
         return host, int(port), is_https
 
-        # TODO: Tests - разбора данных,
-        # http server - module для тестов сайтов
-        # requests - указать какие прокси серверы использовать
-        # и принимать данные. Затем проверять эти данные
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--verbose',
-                        help='Shows full request package in logs',
+                        help='Показывать пакеты целиком в логах',
                         action='store_true')
     parser.add_argument('--no-log',
-                        help='Don\'t show logs',
+                        help='Не показывать логи',
                         action='store_true')
     parser.add_argument('-p',
                         '--port',
                         type=int,
-                        help='Port for proxy')
+                        help='Порт для прокси')
 
     return parser.parse_args()
 
@@ -273,7 +294,7 @@ def main():
     log = not args.no_log
 
     server = ProxyServer(verbose=verbose, show_logs=log)
-    ip, port = server.start(port=port)
+    server.start(port=port)
 
 
 if __name__ == '__main__':
