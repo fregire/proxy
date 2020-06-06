@@ -290,7 +290,7 @@ def parse_args():
 def main():
     args = parse_args()
     verbose = args.verbose
-    port = args.port if args.port else 3228
+    port = args.port if args.port else 0
     log = not args.no_log
 
     server = ProxyServer(verbose=verbose, show_logs=log)
