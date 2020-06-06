@@ -236,7 +236,8 @@ class ProxyServer:
         components = request_row.split()
         protocol = 'https:/' if conn.secure_sock else ''
         method = components[0]
-        url = conn.remote_host + components[1] if conn.secure_sock else components[1]
+        url = conn.remote_host + components[1] \
+            if conn.secure_sock else components[1]
         formatted_request = '{} {}{}'.format(method, protocol, url)
 
         return '{} {}'.format(conn.ip, formatted_request)

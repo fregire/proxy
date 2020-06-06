@@ -1,5 +1,6 @@
 from OpenSSL import crypto
 
+
 class SSLGenerator:
     def __init__(self, path_ca_cert, path_ca_key):
         with open(path_ca_cert) as cert_file:

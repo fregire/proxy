@@ -5,8 +5,11 @@ from OpenSSL import crypto
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              os.path.pardir))
 from modules import ssl_generator
+
+
 CN = b'anytask.org'
 SAN = b'DNS:anytask.org, DNS:www.anytask.org'
+
 
 class SSLGeneratorTests(unittest.TestCase):
     def test_generating_same_cert(self):

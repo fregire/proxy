@@ -13,6 +13,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 from proxy_server import ProxyServer
 from modules import connection
 
+
 ROOT_CRT = 'rootCA.crt'
 ROOT_KEY = 'rootCA.key'
 CERTIFICATES_FOLDER = 'certificates'
@@ -22,6 +23,7 @@ HTTPS_PACKAGE = 'tests/packages/https_package'
 CLIENT_IP = '156.90.34.123'
 BUFFER_SIZE = 1024
 SUCCESS_MESSAGE = b'HTTP/1.1 200 Connection Established\r\n\r\n'
+
 
 class ProxyServerTests(unittest.TestCase):
     def test_init_options(self):
@@ -58,7 +60,9 @@ class ProxyServerTests(unittest.TestCase):
         expected_port = 1111
 
         th = threading.Thread(target=proxy.start,
-                              kwargs={'host': '0.0.0.0', 'port': expected_port})
+                              kwargs={
+                                  'host': '0.0.0.0',
+                                  'port': expected_port})
         th.start()
         time.sleep(0.1)
         host, port = proxy.get_addr()
@@ -71,7 +75,7 @@ class ProxyServerTests(unittest.TestCase):
 
     def test_handling_clients(self):
         url = 'http://{}:{}'.format(WEB_SERVER_ADDRESS[0],
-                                     WEB_SERVER_ADDRESS[1])
+                                    WEB_SERVER_ADDRESS[1])
         print('Starting')
         server = HTTPServer(WEB_SERVER_ADDRESS, CGIHTTPRequestHandler)
         proxy = ProxyServer()
@@ -130,5 +134,3 @@ class ProxyServerTests(unittest.TestCase):
                          CLIENT_IP + ' POST '
                          'http://scratchpads.eu/modules/'
                          'statistics/statistics.php')
-
-

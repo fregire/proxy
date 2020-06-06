@@ -1,5 +1,6 @@
 import socket
 
+
 class Connection:
     def __init__(self, sock, ip, remote_host, remote_port):
         self.socket = sock
