@@ -5,6 +5,7 @@ import requests
 import socket
 import threading
 import time
+import ssl
 
 from http.server import HTTPServer, CGIHTTPRequestHandler
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -19,6 +20,7 @@ WEB_SERVER_ADDRESS = ('localhost', 8081)
 HTTP_PACKAGE = 'tests/packages/http_package'
 HTTPS_PACKAGE = 'tests/packages/https_package'
 CLIENT_IP = '156.90.34.123'
+BUFFER_SIZE = 1024
 
 class ProxyServerTests(unittest.TestCase):
     def test_init_options(self):
@@ -88,6 +90,34 @@ class ProxyServerTests(unittest.TestCase):
         server.shutdown()
         http_th.join()
         proxy_th.join()
+
+    def test_handling_https(self):
+        context = ssl.create_default_context()
+        proxy = ProxyServer()
+        th = threading.Thread(target=proxy.start)
+        th.start()
+
+        host, port = proxy.get_addr()
+        serv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        serv.connect((host, port))
+
+        with open(HTTPS_PACKAGE) as f:
+            serv.sendall(f.read().encode())
+
+        response = b''
+        while True:
+            data = serv.recv(BUFFER_SIZE)
+            if not data:
+                break
+            response += data
+
+        self.assertEqual(b'HTTP/1.1 200 Connection Established\r\n\r\n',
+                         response)
+        serv.close()
+        proxy.stop()
+        th.join()
+
 
     def test_log_info(self):
         proxy = ProxyServer()

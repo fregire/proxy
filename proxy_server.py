@@ -84,7 +84,7 @@ class ProxyServer:
         package = self.__get_first_data(client_sock)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
-
+        
         if is_https:
             self.__handle_https(conn)
         else:
