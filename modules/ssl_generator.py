@@ -19,6 +19,7 @@ class SSLGenerator:
             ext = cert.get_extension(i)
             if ext.get_short_name() == b'subjectAltName':
                 san = str(ext).encode()
+                print(san)
                 break
 
         return self.generate_cert_with_cn_san(cn, san)
