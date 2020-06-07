@@ -115,7 +115,6 @@ class ProxyServerTests(unittest.TestCase):
         self.assertEqual(proxy.executor, None)
 
     def test_handling_https(self):
-        context = ssl.create_default_context()
         proxy = ProxyServer()
         th = threading.Thread(target=proxy.start)
         th.start()

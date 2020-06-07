@@ -63,7 +63,7 @@ class ProxyServer:
                     self.stop()
                     self.show_logs = True
                     break
-                except OSError as e:
+                except socket.error as e:
                     pass
         except KeyboardInterrupt:
             self.show_final_stats()
@@ -83,6 +83,7 @@ class ProxyServer:
         print('Байт отправлено: ', self.sent_bytes)
 
     def stop(self):
+        self.sever_sock.settimeout(0)
         self.sever_sock.close()
         self.executor.shutdown()
         self.executor = None
