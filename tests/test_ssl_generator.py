@@ -39,4 +39,3 @@ class SSLGeneratorTests(unittest.TestCase):
             ext = cert.get_extension(i)
             if ext.get_short_name() == b'subjectAltName':
                 return str(ext).encode()
-

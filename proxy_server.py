@@ -31,7 +31,7 @@ class ProxyServer:
         self.recv_bytes = 0
         self.sent_bytes = 0
         self.statistics_lock = threading.RLock()
-        self.show_logs = show_logs
+        self.show_logs = True
         self.verbose = verbose
         self.executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
 
@@ -47,23 +47,30 @@ class ProxyServer:
     def start(self, host='0.0.0.0', port=0):
         self.sever_sock.bind((host, port))
         self.sever_sock.listen()
-        self.sever_sock.settimeout(0)
         host, port = self.get_addr()
-
+        done = False
         print('Прокси работает на ', '{}:{}'.format(host, port))
 
-        with self.executor as e:
+        try:
             while self.executor:
                 try:
-                    try:
-                        client_sock, addr = self.sever_sock.accept()
-                    except OSError:
-                        continue
-                    e.submit(self.__handle_client, client_sock, addr)
+                    client_sock, addr = self.sever_sock.accept()
+                    self.executor.submit(self.__handle_client,
+                                         client_sock, addr)
                 except KeyboardInterrupt:
                     self.show_final_stats()
-                    self.executor.shutdown()
+                    self.show_logs = False
+                    self.stop()
+                    self.show_logs = True
                     break
+                except OSError as e:
+                    pass
+        except KeyboardInterrupt:
+            self.show_final_stats()
+            self.show_logs = False
+            self.stop()
+            self.show_logs = True
+            pass
 
     def get_addr(self):
         curr_ip = socket.gethostbyname(socket.gethostname())
@@ -76,13 +83,13 @@ class ProxyServer:
         print('Байт отправлено: ', self.sent_bytes)
 
     def stop(self):
+        self.sever_sock.close()
         self.executor.shutdown()
         self.executor = None
-        self.sever_sock.close()
 
     def __handle_client(self, client_sock, addr):
         conn_ip = addr[0]
-        package = self.__get_first_data(client_sock)
+        package = self.__receive_data(client_sock)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
 
@@ -90,11 +97,6 @@ class ProxyServer:
             self.__handle_https(conn)
         else:
             self.__handle_http(conn, package)
-
-    def __get_first_data(self, client_sock):
-        client_data = self.__receive_data(client_sock)
-
-        return client_data if client_data else None
 
     def __handle_http(self, conn, package):
         remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -111,14 +113,8 @@ class ProxyServer:
 
             remote_sock.sendall(package)
             self.update_stats(0, len(package))
-
-            while True:
-                received = remote_sock.recv(self.buffer_size)
-                if not received:
-                    break
-
-                conn.socket.sendall(received)
-                self.update_stats(len(received), 0)
+            response = self.__receive_data(remote_sock)
+            conn.socket.sendall(response)
         finally:
             conn.socket.close()
             remote_sock.close()
@@ -229,6 +225,8 @@ class ProxyServer:
             self.update_stats(len(server_data), 0)
 
     def get_log_info(self, conn, package):
+        if not package:
+            return None
         if self.verbose:
             return package
 
@@ -250,12 +248,24 @@ class ProxyServer:
 
     def __receive_data(self, sock):
         result = b''
+        content_length = 0
 
-        while True:
-            data = sock.recv(self.buffer_size)
-            result = b''.join([result, data])
-            if not data or len(data) < self.buffer_size:
-                break
+        with sock.makefile('rb') as f:
+            while True:
+                line = f.readline()
+                result += line
+                if line == b'\r\n':
+                    break
+
+                line_str = line.decode()
+                con_len_pos = line_str.find('Content-Length:')
+                if con_len_pos > -1:
+                    content_length = int(line_str[16: len(line_str)])
+
+            while content_length > 0:
+                line = f.readline()
+                result += line
+                content_length -= len(line)
 
         return result if len(result) > 0 else None
 
@@ -297,8 +307,11 @@ def main():
     port = args.port if args.port else 0
     log = not args.no_log
 
-    server = ProxyServer(verbose=verbose, show_logs=log)
-    server.start(port=port)
+    try:
+        server = ProxyServer(verbose=verbose, show_logs=log)
+        server.start(port=port)
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == '__main__':
