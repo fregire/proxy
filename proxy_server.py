@@ -90,7 +90,7 @@ class ProxyServer:
 
     def __handle_client(self, client_sock, addr):
         conn_ip = addr[0]
-        package = self.__receive_data(client_sock)
+        package = self.__receive_data(client_sock, False)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
 
@@ -114,7 +114,7 @@ class ProxyServer:
 
             remote_sock.sendall(package)
             self.update_stats(0, len(package))
-            response = self.__receive_data(remote_sock)
+            response = self.__receive_data(remote_sock, False)
             conn.socket.sendall(response)
         finally:
             conn.socket.close()
@@ -196,19 +196,9 @@ class ProxyServer:
         remote_sock.settimeout(3)
         conn.secure_sock.settimeout(3)
 
-        while True:
-            data = conn.secure_sock.recv(self.buffer_size)
-            request += data
-            if not data:
-                break
-
-            if len(data) < self.buffer_size:
-                remote_sock.sendall(data)
-                self.update_stats(0, len(data))
-                break
-
-            remote_sock.sendall(data)
-            self.update_stats(0, len(data))
+        request = self.__receive_data(conn.secure_sock, False)
+        self.update_stats(0, len(request))
+        remote_sock.sendall(request)
 
         if self.show_logs:
             log = self.get_log_info(conn, request.decode())
@@ -247,7 +237,7 @@ class ProxyServer:
         self.sent_bytes += sent
         self.statistics_lock.release()
 
-    def __receive_data(self, sock):
+    def __receive_data(self, sock, debug):
         result = b''
         content_length = 0
 
@@ -266,7 +256,7 @@ class ProxyServer:
             while content_length > 0:
                 line = f.readline()
                 result += line
-                content_length -= len(line)
+                content_length -= len(line) + 2
 
         return result if len(result) > 0 else None
 
@@ -305,7 +295,7 @@ def parse_args():
 def main():
     args = parse_args()
     verbose = args.verbose
-    port = args.port if args.port else 0
+    port = args.port if args.port else 3228
     log = not args.no_log
 
     try:

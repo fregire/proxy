@@ -73,6 +73,16 @@ class ProxyServerTests(unittest.TestCase):
         self.assertEqual(443, port)
         self.assertEqual(True, is_https)
 
+    def test_log_info(self):
+        proxy = ProxyServer()
+        conn = connection.Connection(None, CLIENT_IP, 'scratchpads.eu', 80)
+
+        result = proxy.get_log_info(conn, HTTP_PACKAGE.decode())
+        self.assertEqual(result,
+                         CLIENT_IP + ' POST '
+                         'http://scratchpads.eu/modules/'
+                         'statistics/statistics.php')
+
     def test_starting_stopping_server(self):
         proxy = ProxyServer()
         expected_host = socket.gethostbyname(socket.gethostname())
@@ -134,13 +144,3 @@ class ProxyServerTests(unittest.TestCase):
         self.assertEqual(SUCCESS_MESSAGE, response)
         proxy.stop()
         th.join()
-
-    def test_log_info(self):
-        proxy = ProxyServer()
-        conn = connection.Connection(None, CLIENT_IP, 'scratchpads.eu', 80)
-
-        result = proxy.get_log_info(conn, HTTP_PACKAGE.decode())
-        self.assertEqual(result,
-                         CLIENT_IP + ' POST '
-                         'http://scratchpads.eu/modules/'
-                         'statistics/statistics.php')
