@@ -203,11 +203,14 @@ class ProxyServer:
         client_file = conn.secure_sock.makefile('rb')
         remote_file = remote_sock.makefile('rb')
         content_len = 0
+        is_chunked = False
+        #From client to server
+        #TODO: handle requests with chunks
         while True:
             line = client_file.readline()
             request += line
             if line == b'Transfer-Encoding: chunked\r\n':
-                print('Chunked!!!')
+                is_chunked = True
             if line[:15] == b'Content-Length:':
                 content_len = int(line[15:-2].decode())
             if line == b'\r\n':
@@ -217,16 +220,33 @@ class ProxyServer:
             request += body
         remote_sock.sendall(request)
         content_len = 0
+        is_chunked = False
 
+        #From server to client
         while True:
             line = remote_file.readline()
             response += line
             if line == b'Transfer-Encoding: chunked\r\n':
+                is_chunked = True
                 print('Chunked!!!')
             if line[:15] == b'Content-Length:':
                 content_len = int(line[15:-2].decode())
             if line == b'\r\n':
                 break
+        if is_chunked:
+            conn.secure_sock.sendall(response)
+            response = b''
+            while True:
+                line = remote_file.readline()
+                response += line
+                if line == b'0\r\n':
+                    break
+                num = int(line[:-2].decode(), 16)
+                chunk = remote_file.read(num)
+                response += chunk
+                conn.secure_sock.sendall(response)
+                response = b''
+
         if content_len != 0:
             body = remote_file.read(content_len)
             response += body
