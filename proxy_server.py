@@ -11,6 +11,7 @@ import argparse
 __version__ = '1.0'
 __author__ = 'Gilmutdinov Daniil'
 __email__ = 'fregire@yandex.ru'
+RESPONSE_MESSAGE = b'HTTP/1.1 200 Connection Established\r\n\r\n'
 
 
 class ProxyServer:
@@ -31,7 +32,7 @@ class ProxyServer:
         self.recv_bytes = 0
         self.sent_bytes = 0
         self.statistics_lock = threading.RLock()
-        self.show_logs = True
+        self.show_logs = show_logs
         self.verbose = verbose
         self.executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
 
@@ -90,10 +91,9 @@ class ProxyServer:
 
     def __handle_client(self, client_sock, addr):
         conn_ip = addr[0]
-        package = self.__receive_data(client_sock, False)
+        package = self.__receive_data(client_sock)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
-
         if is_https:
             self.__handle_https(conn)
         else:
@@ -114,7 +114,7 @@ class ProxyServer:
 
             remote_sock.sendall(package)
             self.update_stats(0, len(package))
-            response = self.__receive_data(remote_sock, False)
+            response = self.__receive_data(remote_sock)
             conn.socket.sendall(response)
         finally:
             conn.socket.close()
@@ -140,25 +140,28 @@ class ProxyServer:
         return package
 
     def __handle_https(self, conn):
-        response_message = b'HTTP/1.1 200 Connection Established\r\n\r\n'
         remote_sock = ssl.create_default_context().wrap_socket(
             socket.socket(socket.AF_INET, socket.SOCK_STREAM),
             server_hostname=conn.remote_host)
         remote_sock.connect((conn.remote_host, conn.remote_port))
-        conn.socket.sendall(response_message)
-
+        conn.socket.sendall(RESPONSE_MESSAGE)
         cert, key = self.__create_same_cert(remote_sock)
         cert_path, key_path = self.__create_cert_key_files(conn.remote_host,
                                                            cert, key)
 
-        conn.secure_sock = ssl.wrap_socket(conn.socket,
+        try:
+            conn.secure_sock = ssl.wrap_socket(conn.socket,
                                            certfile=cert_path,
                                            keyfile=key_path,
                                            server_side=True,
                                            ssl_version=ssl.PROTOCOL_TLS,
                                            do_handshake_on_connect=False)
+        except BaseException as e:
+            print(e, 'When creating secure socket')
         try:
             self.__communicate(conn, remote_sock)
+        except BaseException as e:
+            print(e)
         finally:
             os.remove(cert_path)
             os.remove(key_path)
@@ -190,30 +193,44 @@ class ProxyServer:
 
     def __communicate(self, conn, remote_sock):
         if not conn.secure_sock:
+            print('Yes')
             return None
         response = b''
         request = b''
-        remote_sock.settimeout(3)
+        # Can be without timeout
         conn.secure_sock.settimeout(3)
-
-        request = self.__receive_data(conn.secure_sock, False)
-        self.update_stats(0, len(request))
+        remote_sock.settimeout(3)
+        client_file = conn.secure_sock.makefile('rb')
+        remote_file = remote_sock.makefile('rb')
+        content_len = 0
+        while True:
+            line = client_file.readline()
+            request += line
+            if line == b'Transfer-Encoding: chunked\r\n':
+                print('Chunked!!!')
+            if line[:15] == b'Content-Length:':
+                content_len = int(line[15:-2].decode())
+            if line == b'\r\n':
+                break
+        if content_len != 0:
+            body = client_file.read(content_len)
+            request += body
         remote_sock.sendall(request)
-
-        if self.show_logs:
-            log = self.get_log_info(conn, request.decode())
-            if log:
-                print(log)
+        content_len = 0
 
         while True:
-            server_data = remote_sock.recv(self.buffer_size)
-            response += server_data
-
-            if not server_data:
+            line = remote_file.readline()
+            response += line
+            if line == b'Transfer-Encoding: chunked\r\n':
+                print('Chunked!!!')
+            if line[:15] == b'Content-Length:':
+                content_len = int(line[15:-2].decode())
+            if line == b'\r\n':
                 break
-
-            conn.secure_sock.sendall(server_data)
-            self.update_stats(len(server_data), 0)
+        if content_len != 0:
+            body = remote_file.read(content_len)
+            response += body
+        conn.secure_sock.sendall(response)
 
     def get_log_info(self, conn, package):
         if not package:
@@ -237,10 +254,11 @@ class ProxyServer:
         self.sent_bytes += sent
         self.statistics_lock.release()
 
-    def __receive_data(self, sock, debug):
+    def __receive_data(self, sock):
         result = b''
         content_length = 0
-
+        sock_file = sock.makefile('rb')
+        '''
         with sock.makefile('rb') as f:
             while True:
                 line = f.readline()
@@ -257,6 +275,18 @@ class ProxyServer:
                 line = f.readline()
                 result += line
                 content_length -= len(line) + 2
+        '''
+
+        while True:
+            line = sock_file.readline()
+            result += line
+            if line == b'\r\n':
+                break
+            if line[:15] == b'Content-Length:':
+                content_length = int(line[16: -2].decode())
+        if content_length != 0:
+            line = sock_file.read(content_length)
+            result += line
 
         return result if len(result) > 0 else None
 
@@ -299,7 +329,7 @@ def main():
     log = not args.no_log
 
     try:
-        server = ProxyServer(verbose=verbose, show_logs=log)
+        server = ProxyServer(verbose=verbose, show_logs=False)
         server.start(port=port)
     except KeyboardInterrupt:
         pass
