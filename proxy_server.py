@@ -195,62 +195,50 @@ class ProxyServer:
         if not conn.secure_sock:
             print('Yes')
             return None
-        response = b''
-        request = b''
         # Can be without timeout
-        conn.secure_sock.settimeout(3)
-        remote_sock.settimeout(3)
+        #conn.secure_sock.settimeout(3)
+        #remote_sock.settimeout(3)
         client_file = conn.secure_sock.makefile('rb')
         remote_file = remote_sock.makefile('rb')
-        content_len = 0
-        is_chunked = False
-        #From client to server
-        #TODO: handle requests with chunks
-        while True:
-            line = client_file.readline()
-            request += line
-            if line == b'Transfer-Encoding: chunked\r\n':
-                is_chunked = True
-            if line[:15] == b'Content-Length:':
-                content_len = int(line[15:-2].decode())
-            if line == b'\r\n':
-                break
-        if content_len != 0:
-            body = client_file.read(content_len)
-            request += body
-        remote_sock.sendall(request)
-        content_len = 0
-        is_chunked = False
+        self.transfer_data(client_file, remote_sock)
+        self.transfer_data(remote_file, conn.secure_sock)
 
-        #From server to client
+    def transfer_data(self, src_file, dest_socket):
+        content_len = 0
+        is_chunked = False
+        response = b''
+
         while True:
-            line = remote_file.readline()
+            line = src_file.readline()
             response += line
             if line == b'Transfer-Encoding: chunked\r\n':
                 is_chunked = True
-                print('Chunked!!!')
             if line[:15] == b'Content-Length:':
                 content_len = int(line[15:-2].decode())
-            if line == b'\r\n':
+            if line == b'\r\n' or not line:
                 break
         if is_chunked:
-            conn.secure_sock.sendall(response)
+            dest_socket.sendall(response)
             response = b''
             while True:
-                line = remote_file.readline()
+                line = src_file.readline()
                 response += line
                 if line == b'0\r\n':
+                    response += b'\r\n'
                     break
+                if not line:
+                    break
+
                 num = int(line[:-2].decode(), 16)
-                chunk = remote_file.read(num)
+                chunk = src_file.read(num + 2)
                 response += chunk
-                conn.secure_sock.sendall(response)
+                dest_socket.sendall(response)
                 response = b''
 
         if content_len != 0:
-            body = remote_file.read(content_len)
+            body = src_file.read(content_len)
             response += body
-        conn.secure_sock.sendall(response)
+        dest_socket.sendall(response)
 
     def get_log_info(self, conn, package):
         if not package:
