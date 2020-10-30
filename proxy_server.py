@@ -193,7 +193,6 @@ class ProxyServer:
 
     def __communicate(self, conn, remote_sock):
         if not conn.secure_sock:
-            print('Yes')
             return None
         # Can be without timeout
         #conn.secure_sock.settimeout(3)
