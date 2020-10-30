@@ -72,7 +72,7 @@ class ProxyServer:
 
     def __handle_client(self, client_sock, addr):
         conn_ip = addr[0]
-        package = self.__receive_data(client_sock)
+        package = self.__receive_data(client_sock, 1)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
 
@@ -115,12 +115,12 @@ class ProxyServer:
 
     def __communicate(self, conn, remote_sock):
         while True:
-            request = self.__receive_data(conn.socket, timeout=2)
+            request = self.__receive_data(conn.socket, timeout=1)
             if request:
                 remote_sock.sendall(request)
                 self.update_stats(0, len(request))
 
-            response = self.__receive_data(remote_sock, timeout=2)
+            response = self.__receive_data(remote_sock, timeout=1)
             if response:
                 conn.socket.sendall(response)
                 self.update_stats(len(response), 0)
@@ -251,7 +251,7 @@ def parse_args():
 def main():
     args = parse_args()
     verbose = args.verbose
-    port = args.port if args.port else 3228
+    port = args.port if args.port else 0
     show_logs = not args.no_log
 
     try:
