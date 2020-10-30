@@ -2,9 +2,10 @@ import socket
 import threading
 import os
 from concurrent.futures import ThreadPoolExecutor
-from connection import Connection
 import argparse
-from statistics import Statistics
+from modules.connection import Connection
+from modules.statistics import Statistics
+
 
 __version__ = '1.0'
 __author__ = 'Gilmutdinov Daniil'
@@ -15,11 +16,11 @@ CONTENT_LEN_HEADER = b'Content-Length:'
 
 
 class ProxyServer:
-    def __init__(self, buffer_size=64000,
+    def __init__(self, buffer_size=65535,
                  threads_count=2 * os.cpu_count(),
                  verbose=False,
                  show_logs=True):
-        self.sever_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.buffer_size = buffer_size
         self.threads_count = threads_count
         self.stats = Statistics()
@@ -29,34 +30,22 @@ class ProxyServer:
         self.executor = ThreadPoolExecutor(max_workers=self.threads_count - 1)
 
     def start(self, host='0.0.0.0', port=0):
-        self.sever_sock.bind((host, port))
-        self.sever_sock.listen()
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        self.server_sock.bind((host, port))
+        self.server_sock.listen()
         host, port = self.get_server_addr()
 
         print('Прокси работает на ', '{}:{}'.format(host, port))
 
-        try:
-            while self.executor:
-                try:
-                    client_sock, addr = self.sever_sock.accept()
-                    self.executor.submit(self.__handle_client,
-                                         client_sock, addr)
-                except KeyboardInterrupt:
-                    print('Stopped inner')
-                    self.stop()
-                    self.show_final_stats()
-                    self.sever_sock.close()
-                    pass
-        except KeyboardInterrupt:
-            print('Stopped outer')
-            self.stop()
-            self.show_final_stats()
-            self.sever_sock.close()
-            pass
+        while self.executor:
+            client_sock, addr = self.server_sock.accept()
+            self.executor.submit(self.__handle_client,
+                                 client_sock, addr)
 
     def stop(self):
-        self.sever_sock.settimeout(0)
-        self.sever_sock.close()
+        self.server_sock.settimeout(0)
+        self.server_sock.close()
         self.executor.shutdown()
         self.executor = None
 
@@ -66,13 +55,13 @@ class ProxyServer:
 
     def get_server_addr(self):
         curr_ip = socket.gethostbyname(socket.gethostname())
-        curr_port = self.sever_sock.getsockname()[1]
+        curr_port = self.server_sock.getsockname()[1]
 
         return curr_ip, curr_port
 
     def __handle_client(self, client_sock, addr):
         conn_ip = addr[0]
-        package = self.__receive_data(client_sock, 1)
+        package = self.__receive_data(client_sock, 1.5)
         host, port, is_https = self.get_conn_info(package)
         conn = Connection(client_sock, conn_ip, host, port)
 
@@ -192,9 +181,8 @@ class ProxyServer:
         return '{} {}'.format(conn.ip, formatted_request)
 
     def update_stats(self, recv, sent):
-        self.stats_lock.acquire()
-        self.stats.update(recv, sent)
-        self.stats_lock.release()
+        with self.stats_lock:
+            self.stats.update(recv, sent)
 
     def __receive_data(self, sock, timeout=None):
         result = b''
@@ -258,6 +246,8 @@ def main():
         server = ProxyServer(verbose=verbose, show_logs=show_logs)
         server.start(port=port)
     except KeyboardInterrupt:
+        server.stop()
+        server.show_final_stats()
         pass
 
 
