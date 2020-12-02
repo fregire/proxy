@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import argparse
 from modules.connection import Connection
 from modules.statistics import Statistics
+import select
 
 
 __version__ = '1.0'
@@ -103,19 +104,26 @@ class ProxyServer:
             remote_sock.close()
 
     def __communicate(self, conn, remote_sock):
+        conn.socket.setblocking(0)
+        remote_sock.setblocking(0)
+
         while True:
-            request = self.__receive_data(conn.socket, timeout=1)
-            if request:
-                remote_sock.sendall(request)
-                self.update_stats(0, len(request))
+            readers, _, _ = select.select([conn.socket, remote_sock], [], [])
+            counter = 0
 
-            response = self.__receive_data(remote_sock, timeout=1)
-            if response:
-                conn.socket.sendall(response)
-                self.update_stats(len(response), 0)
+            for i, reader in enumerate(readers):
+                data = reader.recv(self.buffer_size)
+                if data:
+                    counter += 1
 
-            if not response and not request:
+                if reader is conn.socket:
+                    remote_sock.sendall(data)
+                else:
+                    conn.socket.sendall(data)
+
+            if counter == 0:
                 break
+
 
     def get_header_info(self, src):
         content_len = 0
