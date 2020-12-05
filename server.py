@@ -18,7 +18,7 @@ CONTENT_LEN_HEADER = b'Content-Length:'
 
 class ProxyServer:
     def __init__(self, buffer_size=65535,
-                 threads_count=2 * os.cpu_count(),
+                 threads_count=os.cpu_count() * 2,
                  verbose=False,
                  show_logs=True):
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -98,31 +98,30 @@ class ProxyServer:
 
         try:
             self.__communicate(conn, remote_sock)
-        finally:
-            conn.socket.close()
-            conn.secure_sock.close()
-            remote_sock.close()
+        except:
+            pass
 
     def __communicate(self, conn, remote_sock):
-        conn.socket.setblocking(0)
-        remote_sock.setblocking(0)
+        #conn.socket.setblocking(0)
+        #remote_sock.setblocking(0)
+        with conn.socket:
+            with remote_sock:
+                while True:
+                    readers, _, _ = select.select([conn.socket, remote_sock], [], [])
+                    has_data = False
 
-        while True:
-            readers, _, _ = select.select([conn.socket, remote_sock], [], [])
-            counter = 0
+                    for i, reader in enumerate(readers):
+                        data = reader.recv(self.buffer_size)
+                        if data:
+                            has_data = True
 
-            for i, reader in enumerate(readers):
-                data = reader.recv(self.buffer_size)
-                if data:
-                    counter += 1
+                            if reader is conn.socket:
+                                remote_sock.sendall(data)
+                            else:
+                                conn.socket.sendall(data)
 
-                if reader is conn.socket:
-                    remote_sock.sendall(data)
-                else:
-                    conn.socket.sendall(data)
-
-            if counter == 0:
-                break
+                    if not has_data:
+                        break
 
 
     def get_header_info(self, src):
